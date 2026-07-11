@@ -26,7 +26,7 @@ TRACK_STRIDE = 2  # process every 2nd frame (15 fps effective); 1 = accuracy mod
 
 def run_tracking(video: Path, out_parquet: Path, models_dir: Path,
                  progress_cb=None, frame_cb=None,
-                 stride: int = TRACK_STRIDE) -> pd.DataFrame:
+                 stride: int | None = None) -> pd.DataFrame:
     """Track all persons through the video; write tracks parquet.
 
     Single-decode integration: frame_cb(real_frame_idx, orig_img, boxes_xyxy)
@@ -34,6 +34,8 @@ def run_tracking(video: Path, out_parquet: Path, models_dir: Path,
     the same decode instead of reading the video again. Frame numbers written
     to the parquet are REAL video frame indices (i * stride).
     """
+    if stride is None:
+        stride = TRACK_STRIDE  # resolved at call time so tests/config can override
     model = YOLO(str(models_dir / MODEL_NAME))
     rows = []
     # NOTE: do NOT pass half=True — on MPS it hits a deprecated fp16 fallback
@@ -85,44 +87,51 @@ def pick_subject(df: pd.DataFrame, click_xy: tuple[float, float],
 
 
 MAX_STITCH_GAP = 45      # frames the subject may vanish before we stop following
+STITCH_OVERLAP = 20      # a continuation may START this many frames BEFORE the
+                         # current fragment ends (tracker fragments overlap)
 STITCH_JUMP_PX = 12.0    # allowed bbox-center drift per missing frame
+STITCH_BASE_PX = 60.0    # base allowance: an id switch mid-motion jumps a bit
 
 
 def stitch_subject(df: pd.DataFrame, first_id: int) -> pd.DataFrame:
     """Follow the subject across track-id breaks by position continuity.
 
     Trackers fragment ids on occlusion or camera motion (broadcast footage
-    produced 485 ids for 4 players). Starting from the clicked track, whenever
-    it ends we adopt the track that begins soonest afterwards with a bbox
-    center near the subject's last seen position.
+    produced 485 ids for 4 players), and the replacement id often starts a few
+    frames BEFORE the old one dies. Starting from the clicked track, whenever
+    the current fragment ends we adopt the unused track whose position at the
+    handover point is nearest — searching a window that includes that overlap.
     """
     df = df.sort_values("frame")
-    starts = df.groupby("track_id")["frame"].min()
     cx = (df["x1"] + df["x2"]) / 2.0
     cy = (df["y1"] + df["y2"]) / 2.0
     df = df.assign(cx=cx, cy=cy)
+    by_id = {tid: g.reset_index(drop=True) for tid, g in df.groupby("track_id")}
+    starts = {tid: int(g["frame"].iloc[0]) for tid, g in by_id.items()}
 
     chain = [first_id]
     used = {first_id}
-    cur = df[df["track_id"] == first_id]
+    cur = by_id[first_id]
     while True:
         last = cur.iloc[-1]
         last_f = int(last["frame"])
-        cands = starts[(starts > last_f) & (starts <= last_f + MAX_STITCH_GAP)]
         best_id, best_score = None, np.inf
-        for tid, f0 in cands.items():
-            if tid in used:
+        for tid, f0 in starts.items():
+            if tid in used or not (last_f - STITCH_OVERLAP < f0 <= last_f + MAX_STITCH_GAP):
                 continue
-            head = df[(df["track_id"] == tid) & (df["frame"] == f0)].iloc[0]
-            gap = f0 - last_f
+            g = by_id[tid]
+            # candidate's position at the handover point (>= last_f if overlapping)
+            at = g[g["frame"] >= last_f]
+            head = at.iloc[0] if len(at) else g.iloc[-1]
+            gap = max(0, f0 - last_f)
             d = np.hypot(head["cx"] - last["cx"], head["cy"] - last["cy"])
-            if d <= STITCH_JUMP_PX * gap and d + 2.0 * gap < best_score:
+            if d <= STITCH_BASE_PX + STITCH_JUMP_PX * gap and d + 2.0 * gap < best_score:
                 best_id, best_score = tid, d + 2.0 * gap
         if best_id is None:
             break
         used.add(best_id)
         chain.append(best_id)
-        cur = df[df["track_id"] == best_id]
+        cur = by_id[best_id]
 
     out = df[df["track_id"].isin(chain)].drop(columns=["cx", "cy"])
     # a frame can appear in overlapping fragments — keep the first occurrence

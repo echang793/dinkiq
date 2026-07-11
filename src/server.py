@@ -199,10 +199,12 @@ def frame(sid: str):
 
 def _calibratable(status: dict) -> bool:
     """Calibration allowed once ingest finished — including re-calibration of
-    completed or failed sessions."""
-    if status == {"stage": "ingest", "state": "done"}:
-        return True
-    return status.get("state") in ("done", "error") and status.get("stage") != "ingest"
+    completed or failed sessions. Compare fields, not whole dicts (status also
+    carries progress/overall/eta keys)."""
+    stage, state = status.get("stage"), status.get("state")
+    if stage == "ingest":
+        return state == "done"
+    return state in ("done", "error")
 
 
 @app.post("/api/session/{sid}/calibrate")
