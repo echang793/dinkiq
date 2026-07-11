@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pickle-coach",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["-c", "cd /Users/erichang/Desktop/pickle_coach/src && exec ../.venv/bin/python server.py"],
+      "port": 8100
+    }
+  ]
+}
