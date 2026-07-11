@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pickle Coach</title>
+<style>
+  :root {
+    --bg: #0e1116; --card: #171c24; --card2: #1f2630; --line: #2a3342;
+    --text: #e8edf4; --muted: #8b98ab; --accent: #b4f461; --accent2: #4ecdc4;
+    --warn: #ffb454;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "SF Pro Text", Segoe UI, sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 80px; }
+  header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 24px; }
+  header h1 { font-size: 22px; letter-spacing: -0.02em; }
+  header h1 span { color: var(--accent); }
+  header small { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px; margin-bottom: 14px; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px; }
+  button { background: var(--accent); color: #10140a; border: 0; border-radius: 10px; padding: 10px 18px; font-weight: 700; font-size: 14px; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.ghost { background: var(--card2); color: var(--text); border: 1px solid var(--line); }
+  .drop { border: 2px dashed var(--line); border-radius: 14px; padding: 34px; text-align: center; color: var(--muted); cursor: pointer; }
+  .drop.on { border-color: var(--accent); color: var(--accent); }
+  .sess { display: flex; justify-content: space-between; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .sess:last-child { border-bottom: 0; }
+  .pill { font-size: 12px; padding: 2px 10px; border-radius: 99px; background: var(--card2); color: var(--muted); }
+  .pill.done { color: var(--accent); } .pill.error { color: #ff6b6b; } .pill.running { color: var(--warn); }
+  #calCanvas { width: 100%; border-radius: 10px; cursor: crosshair; display: block; }
+  .hint { color: var(--accent2); font-weight: 600; margin: 10px 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+  .stat { background: var(--card2); border-radius: 12px; padding: 14px; }
+  .stat .v { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
+  .stat .l { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .stat.hero { grid-column: 1 / -1; background: linear-gradient(135deg, #22301a, #1a2a28); border: 1px solid #3a4f2a; }
+  .stat.hero .v { font-size: 34px; color: var(--accent); }
+  .bars { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+  .bar { display: grid; grid-template-columns: 110px 1fr 48px; gap: 10px; align-items: center; font-size: 13px; }
+  .bar .track { background: var(--card2); border-radius: 6px; height: 12px; overflow: hidden; }
+  .bar .fill { height: 100%; border-radius: 6px; background: var(--accent2); }
+  #heatCanvas { width: 100%; max-width: 340px; display: block; margin: 8px auto; border-radius: 10px; }
+  .spin { color: var(--warn); font-weight: 600; }
+  .hidden { display: none; }
+  a.back { color: var(--muted); font-size: 13px; cursor: pointer; text-decoration: none; }
+  .coach { border-left: 3px solid var(--accent); padding: 10px 14px; background: var(--card2); border-radius: 0 10px 10px 0; margin-top: 10px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Pickle<span>Coach</span></h1><small>your pickleball coach, from film</small></header>
+
+  <div id="home">
+    <div class="card">
+      <h2>New session</h2>
+      <div class="drop" id="drop">Drop match video here or click to choose (MP4/MOV)</div>
+      <input type="file" id="file" accept=".mp4,.mov,.m4v" class="hidden">
+      <div id="upMsg" class="hint hidden"></div>
+    </div>
+    <div class="card">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+        <h2 style="margin-bottom:0">Sessions</h2>
+        <button class="ghost" id="delBtn" onclick="deleteSelected()" disabled>Delete selected</button>
+      </div>
+      <div id="sessList" style="color:var(--muted)">none yet</div>
+    </div>
+    <div class="card">
+      <h2>Progress over time</h2>
+      <div id="trend" style="color:var(--muted); font-size:14px">no completed sessions yet</div>
+    </div>
+  </div>
+
+  <div id="calib" class="hidden">
+    <a class="back" onclick="goHome()">&larr; sessions</a>
+    <div class="card">
+      <h2>Calibrate</h2>
+      <div class="hint" id="calHint"></div>
+      <canvas id="calCanvas"></canvas>
+      <div style="margin-top:12px; display:flex; gap:10px">
+        <button class="ghost" onclick="resetCal()">Reset clicks</button>
+        <button id="calGo" onclick="submitCal()" disabled>Analyze session</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="proc" class="hidden">
+    <a class="back" onclick="goHome()">&larr; sessions</a>
+    <div class="card">
+      <h2>Processing</h2>
+      <div class="spin" id="procMsg">working…</div>
+      <div style="background:var(--card2); border-radius:8px; height:16px; margin-top:12px; overflow:hidden">
+        <div id="procBar" style="height:100%; width:0%; border-radius:8px; background:linear-gradient(90deg, var(--accent2), var(--accent)); transition:width .6s"></div>
+      </div>
+      <div id="procEta" style="color:var(--muted); font-size:13px; margin-top:8px"></div>
+    </div>
+  </div>
+
+  <div id="results" class="hidden">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <a class="back" onclick="goHome()">&larr; sessions</a>
+      <div style="display:flex; gap:8px">
+        <button class="ghost" onclick="startCalib()">Recalibrate</button>
+        <button class="ghost" onclick="reanalyze()">Re-analyze</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Session info</h2>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end">
+        <label style="font-size:12px; color:var(--muted)">Label<br>
+          <input id="mLabel" style="background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; width:220px"></label>
+        <label style="font-size:12px; color:var(--muted)">Played on<br>
+          <input id="mDate" type="date" style="background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px"></label>
+        <label style="font-size:12px; color:var(--muted)">Known DUPR (for calibration)<br>
+          <input id="mDupr" type="number" step="0.05" min="2" max="8" style="background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; width:110px"></label>
+        <button class="ghost" onclick="saveMeta()">Save</button>
+        <span id="mSaved" style="color:var(--accent); font-size:13px"></span>
+      </div>
+    </div>
+    <div class="card" id="duprCard">
+      <h2>Skill estimate</h2>
+      <div class="grid" id="duprHero"></div>
+      <div class="bars" id="duprDims" style="margin-top:14px"></div>
+      <div id="duprCaveats" style="color:var(--muted); font-size:13px; margin-top:10px"></div>
+      <div id="tipBox"></div>
+    </div>
+    <div class="card">
+      <h2>Session results</h2>
+      <div id="metricWarn"></div>
+      <div class="grid" id="stats"></div>
+      <div class="bars" id="zones" style="margin-top:16px"></div>
+      <div id="coachBox"></div>
+    </div>
+    <div class="card"><h2>Court heatmap</h2><canvas id="heatCanvas"></canvas></div>
+    <div class="card" id="shotCard">
+      <h2>Shots</h2>
+      <div class="grid" id="shotStats"></div>
+      <div class="bars" id="shotMix" style="margin-top:12px"></div>
+      <div id="shotNote" style="color:var(--muted); font-size:13px; margin-top:8px"></div>
+    </div>
+    <div class="card" id="rallyCard">
+      <h2>Rallies</h2>
+      <div class="grid" id="rallyStats"></div>
+      <div id="rallyList" style="margin-top:12px"></div>
+      <video id="rallyVideo" class="hidden" controls style="width:100%; border-radius:10px; margin-top:10px"></video>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const api = (p, opt) => fetch('/api' + p, opt).then(r => { if (!r.ok) return r.json().then(e => Promise.reject(e.detail || r.status)); return r.json(); });
+let sid = null, calClicks = [], calImg = null, pollTimer = null;
+
+function show(id) {
+  ['home','calib','proc','results'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+}
+function goHome() { clearInterval(pollTimer); show('home'); loadSessions(); loadTrend(); }
+
+async function loadTrend() {
+  const pts = await api('/progress');
+  if (!pts.length) { $('trend').textContent = 'no completed sessions yet'; return; }
+  $('trend').innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:13px">
+    <tr style="color:var(--muted); text-align:left">
+      <th style="padding:4px">date</th><th>session</th><th>kitchen%</th><th>~DUPR</th><th>rally avg</th></tr>` +
+    pts.map(p => `<tr style="border-top:1px solid var(--line)">
+      <td style="padding:6px 4px">${p.date}</td>
+      <td>${p.label || p.session_id}</td>
+      <td>${p.kitchen_pct != null ? p.kitchen_pct + '%' : '—'}</td>
+      <td style="color:var(--accent)">${p.dupr_band != null ? '~' + p.dupr_band : '—'}</td>
+      <td>${p.avg_rally_hits != null ? p.avg_rally_hits : '—'}</td></tr>`).join('') + '</table>';
+}
+
+// ---------- upload ----------
+$('drop').onclick = () => $('file').click();
+$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('on'); };
+$('drop').ondragleave = () => $('drop').classList.remove('on');
+$('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('on'); if (e.dataTransfer.files[0]) doUpload(e.dataTransfer.files[0]); };
+$('file').onchange = () => { if ($('file').files[0]) doUpload($('file').files[0]); };
+
+async function doUpload(f) {
+  $('upMsg').classList.remove('hidden');
+  $('upMsg').textContent = 'Uploading ' + f.name + '…';
+  const fd = new FormData(); fd.append('file', f);
+  try {
+    const r = await api('/upload', { method: 'POST', body: fd });
+    sid = r.session_id;
+    $('upMsg').textContent = 'Preparing video…';
+    waitFor(s => s.stage === 'ingest' && s.state === 'done', startCalib,
+            'Preparing video');
+  } catch (e) { $('upMsg').textContent = 'Upload failed: ' + e; }
+}
+
+const STAGE_NAMES = { queued: 'waiting in queue', tracking: 'tracking players & ball',
+  metrics: 'computing court metrics', events: 'finding rallies', shots: 'classifying shots',
+  rating: 'estimating your level', ingest: 'preparing video' };
+function fmtEta(s) {
+  if (s == null || !isFinite(s) || s <= 0) return '';
+  const m = Math.floor(s / 60), sec = Math.round(s % 60);
+  return '~' + (m ? m + ':' + String(sec).padStart(2, '0') + ' min' : sec + 's') + ' remaining';
+}
+function waitFor(pred, then, label) {
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    const s = await api('/session/' + sid);
+    if (s.state === 'error') { clearInterval(pollTimer); alert(label + ' failed: ' + s.error); goHome(); return; }
+    $('procMsg').textContent = label + ' — ' + (STAGE_NAMES[s.stage] || s.stage) + '…';
+    const pct = Math.round(100 * (s.overall || 0));
+    $('procBar').style.width = pct + '%';
+    $('procEta').textContent = pct + '%' + (s.eta_seconds != null ? ' · ' + fmtEta(s.eta_seconds) : '');
+    if (pred(s)) { clearInterval(pollTimer); then(s); }
+  }, 1500);
+}
+
+// ---------- calibration ----------
+const CAL_STEPS = [
+  'Click FAR-LEFT court corner', 'Click FAR-RIGHT court corner',
+  'Click NEAR-RIGHT court corner', 'Click NEAR-LEFT court corner',
+  'Click FAR-LEFT kitchen corner (NVZ line meets left sideline, far side)',
+  'Click FAR-RIGHT kitchen corner', 'Click NEAR-RIGHT kitchen corner',
+  'Click NEAR-LEFT kitchen corner',
+  'Click YOURSELF (your body)',
+];
+const N_CLICKS = 9, ME_IDX = 8;
+// Padding around the frame lets you place corners that sit outside the shot:
+// homography only needs 4 point pairs — they don't have to be inside the image.
+const PADF = 0.25;
+let padX = 0, padY = 0;
+function startCalib() {
+  show('calib'); calClicks = [];
+  calImg = new Image();
+  calImg.onload = () => {
+    const c = $('calCanvas');
+    padX = Math.round(calImg.width * PADF);
+    padY = Math.round(calImg.height * PADF);
+    c.width = calImg.width + 2 * padX;
+    c.height = calImg.height + 2 * padY;
+    drawCal();
+  };
+  calImg.src = '/api/session/' + sid + '/frame?ts=' + Date.now();
+  updateCalUI();
+}
+function updateCalUI() {
+  $('calHint').innerHTML = calClicks.length < N_CLICKS
+    ? (calClicks.length + 1) + '/' + N_CLICKS + ' — ' + CAL_STEPS[calClicks.length] +
+      (calClicks.length < 4 ? ' <span style="color:var(--muted); font-weight:400">(corner cut off by the camera? click its estimated spot in the dark border)</span>' :
+       calClicks.length < 8 ? ' <span style="color:var(--muted); font-weight:400">(kitchen lines are near the net — mark them precisely, they anchor the whole calibration)</span>' : '')
+    : 'Calibration set. Ready to analyze.';
+  $('calGo').disabled = calClicks.length !== N_CLICKS;
+}
+function drawCal() {
+  const c = $('calCanvas'), ctx = c.getContext('2d');
+  // border zone = clickable off-frame estimate area
+  ctx.fillStyle = '#0a0d12'; ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#2a3342';
+  for (let d = -c.height; d < c.width; d += 24) { // hatching
+    ctx.beginPath(); ctx.moveTo(d, 0); ctx.lineTo(d + c.height, c.height); ctx.stroke();
+  }
+  ctx.drawImage(calImg, padX, padY);
+  ctx.strokeStyle = '#4a5568'; ctx.strokeRect(padX, padY, calImg.width, calImg.height);
+  calClicks.forEach((p, i) => {
+    const x = p[0] + padX, y = p[1] + padY;
+    ctx.fillStyle = i < 4 ? '#b4f461' : i < 8 ? '#ffb454' : '#4ecdc4';
+    ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.fill();
+    ctx.fillStyle = '#000'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(i < 4 ? i + 1 : i < 8 ? 'K' + (i - 3) : 'ME', x, y + 4);
+  });
+  const quad = (idx, color) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath();
+    idx.forEach((k, j) => {
+      const p = calClicks[k];
+      j ? ctx.lineTo(p[0] + padX, p[1] + padY) : ctx.moveTo(p[0] + padX, p[1] + padY);
+    });
+    ctx.closePath(); ctx.stroke();
+  };
+  if (calClicks.length >= 4) quad([0, 1, 2, 3], 'rgba(180,244,97,.8)');
+  if (calClicks.length >= 8) quad([4, 5, 6, 7], 'rgba(255,180,84,.8)');
+}
+$('calCanvas').onclick = e => {
+  if (calClicks.length >= N_CLICKS) return;
+  const c = $('calCanvas'), r = c.getBoundingClientRect();
+  const cx = (e.clientX - r.left) * c.width / r.width;
+  const cy = (e.clientY - r.top) * c.height / r.height;
+  // store in FRAME coordinates; off-frame estimates go negative / past frame size
+  const fx = cx - padX, fy = cy - padY;
+  const inFrame = fx >= 0 && fy >= 0 && fx <= calImg.width && fy <= calImg.height;
+  // kitchen corners + "yourself" must be visible in the frame (only baseline
+  // corners may be off-screen estimates)
+  if (calClicks.length >= 4 && !inFrame) return;
+  calClicks.push([fx, fy]);
+  drawCal(); updateCalUI();
+};
+function resetCal() { calClicks = []; drawCal(); updateCalUI(); }
+
+async function submitCal() {
+  await api('/session/' + sid + '/calibrate', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ corners_px: calClicks.slice(0, 4),
+                           kitchen_px: calClicks.slice(4, 8),
+                           self_px: calClicks[ME_IDX] }),
+  });
+  show('proc');
+  waitFor(s => s.stage === 'done', showResults, 'Analyzing');
+}
+
+// ---------- results ----------
+function statCard(v, l, hero) { return `<div class="stat${hero ? ' hero' : ''}"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
+
+function coachLine(m) {
+  const z = m.zone_pct;
+  if (z.transition > 35) return `You spent ${z.transition}% of your time in no-man's land (8–15 ft from the net). Pick a spot: get up to the kitchen line or stay back — hanging in the middle is where points die.`;
+  if (z.kitchen < 30) return `Only ${z.kitchen}% of your time was at the kitchen line. Higher-rated players live there — work on advancing behind your return and third shot.`;
+  return `Solid court positioning: ${z.kitchen}% at the kitchen with only ${z.transition}% in no-man's land. Keep it up.`;
+}
+
+async function showResults(s) {
+  const m = s.metrics; show('results');
+  fillMeta(s.meta);
+  $('stats').innerHTML =
+    statCard(m.zone_pct.kitchen + '%', 'time at kitchen line', true) +
+    statCard(m.distance_ft.toLocaleString() + ' ft', 'distance covered') +
+    statCard(m.avg_speed_ft_s + ' ft/s', 'avg movement speed') +
+    statCard(Math.round(m.active_seconds / 60) + ' min', 'time analyzed') +
+    statCard(m.coverage_pct + '%', 'court coverage') +
+    statCard(m.median_dist_from_net_ft + ' ft', 'median dist from net');
+  $('zones').innerHTML = ['kitchen', 'transition', 'baseline'].map(z =>
+    `<div class="bar"><span>${z === 'transition' ? "no-man's land" : z}</span>
+     <div class="track"><div class="fill" style="width:${m.zone_pct[z]}%"></div></div>
+     <span>${m.zone_pct[z]}%</span></div>`).join('');
+  $('coachBox').innerHTML = '';
+  $('metricWarn').innerHTML = (m.warnings || []).map(w =>
+    `<div class="coach" style="border-color:#ff6b6b">⚠ ${w}</div>`).join('');
+  drawHeatmap(m);
+  renderRallies(s.events);
+  renderShots(s.shots);
+  renderDupr(s.dupr, m);
+}
+
+function renderDupr(d, m) {
+  $('duprHero').innerHTML = ''; $('duprDims').innerHTML = '';
+  $('duprCaveats').innerHTML = ''; $('tipBox').innerHTML = '';
+  if (!d) { $('duprCaveats').textContent = 'Skill estimate not computed for this session (re-run analysis).'; return; }
+  if (!d.available) {
+    $('duprCaveats').textContent = d.reason + (d.caveats || []).map(c => ' · ' + c).join('');
+    return;
+  }
+  $('duprHero').innerHTML =
+    statCard('~' + d.band.toFixed(2).replace(/0$/, ''), 'your play resembles this DUPR range', true) +
+    statCard(Math.round(d.confidence * 100) + '%', 'estimate confidence');
+  const dims = Object.values(d.dimensions).sort((a, b) => a.band - b.band);
+  $('duprDims').innerHTML = dims.map(dim => {
+    const pct = 100 * (dim.band - 2.5) / 2.5;
+    return `<div class="bar"><span>${dim.label}</span>
+      <div class="track"><div class="fill" style="width:${pct}%; background:${dim.band < 3.5 ? '#ffb454' : 'var(--accent2)'}"></div></div>
+      <span>${dim.band.toFixed(1)}</span></div>`;
+  }).join('');
+  if (d.caveats && d.caveats.length) {
+    $('duprCaveats').innerHTML = d.caveats.map(c => '· ' + c).join('<br>');
+  }
+  $('tipBox').innerHTML = (d.tips || []).map(t => `<div class="coach">🏓 ${t}</div>`).join('');
+}
+
+function renderShots(sh) {
+  $('shotStats').innerHTML = ''; $('shotMix').innerHTML = ''; $('shotNote').textContent = '';
+  if (!sh) { $('shotNote').textContent = 'Shot analysis not run for this session.'; return; }
+  if (!sh.available) {
+    $('shotNote').textContent = '⚠ ' + sh.reason + ' (ball hard to track in this footage — positioning and rally stats above are unaffected)';
+    return;
+  }
+  const mix = sh.shot_mix || {}, total = Object.values(mix).reduce((a, b) => a + b, 0);
+  let cards = statCard(total, 'classified shots');
+  if (sh.serves_measured) {
+    cards += statCard(sh.avg_serve_depth_from_baseline_ft + ' ft', 'avg serve dist from baseline') +
+             statCard(sh.deep_serve_pct + '%', 'deep serves (≤8 ft)');
+  }
+  cards += statCard(Math.round((sh.ball.coverage || 0) * 100) + '%', 'ball track coverage');
+  $('shotStats').innerHTML = cards;
+  const order = ['drive', 'dink', 'drop', 'medium', 'unknown'];
+  $('shotMix').innerHTML = order.filter(k => mix[k]).map(k => {
+    const pct = total ? Math.round(100 * mix[k] / total) : 0;
+    return `<div class="bar"><span>${k}</span>
+      <div class="track"><div class="fill" style="width:${pct}%"></div></div>
+      <span>${mix[k]}</span></div>`;
+  }).join('');
+}
+
+function renderRallies(ev) {
+  const card = $('rallyCard');
+  if (!ev || !ev.rally_count) {
+    card.classList.remove('hidden');
+    $('rallyStats').innerHTML = '';
+    $('rallyList').innerHTML = `<span style="color:var(--muted)">No rallies detected${ev && ev.note ? ' — ' + ev.note : ''}.</span>`;
+    return;
+  }
+  card.classList.remove('hidden');
+  $('rallyStats').innerHTML =
+    statCard(ev.rally_count, 'rallies') +
+    statCard(ev.subject_shots, 'your shots') +
+    statCard(ev.avg_rally_hits, 'avg hits / rally') +
+    statCard(ev.max_rally_hits, 'longest rally (hits)') +
+    statCard(ev.avg_rally_seconds + 's', 'avg rally length') +
+    statCard(ev.play_time_pct + '%', 'time in play');
+  $('rallyList').innerHTML = ev.rallies.map((r, i) =>
+    `<div class="sess" onclick="playClip(${i})">
+       <span>Rally ${i + 1} — ${r.hits} hits, ${r.duration}s</span>
+       <span class="pill">▶ watch</span></div>`).join('');
+}
+
+function fillMeta(meta) {
+  $('mLabel').value = (meta && meta.label) || '';
+  $('mDate').value = (meta && meta.played_at) || '';
+  $('mDupr').value = (meta && meta.known_dupr) || '';
+  $('mSaved').textContent = '';
+}
+async function saveMeta() {
+  const body = {};
+  if ($('mLabel').value) body.label = $('mLabel').value;
+  if ($('mDate').value) body.played_at = $('mDate').value;
+  if ($('mDupr').value) body.known_dupr = parseFloat($('mDupr').value);
+  await api('/session/' + sid + '/meta', {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  $('mSaved').textContent = 'saved ✓';
+}
+
+async function reanalyze() {
+  await api('/session/' + sid + '/reprocess', { method: 'POST' });
+  show('proc');
+  waitFor(s => s.stage === 'done', showResults, 'Re-analyzing');
+}
+
+function playClip(i) {
+  const v = $('rallyVideo');
+  v.classList.remove('hidden');
+  v.src = '/api/session/' + sid + '/clip/' + i;
+  v.play();
+}
+
+function drawHeatmap(m) {
+  const grid = m.heatmap, rows = grid.length, cols = grid[0].length;
+  const c = $('heatCanvas'), S = 24; c.width = cols * S + 40; c.height = rows * S + 40;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#12161d'; ctx.fillRect(0, 0, c.width, c.height);
+  const max = Math.max(1, ...grid.flat());
+  for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) {
+    const v = grid[r][q] / max;
+    if (v > 0) {
+      ctx.fillStyle = `rgba(180,244,97,${0.12 + 0.88 * Math.sqrt(v)})`;
+      ctx.fillRect(20 + q * S, 20 + r * S, S - 1, S - 1);
+    }
+  }
+  // court lines: outer, net (y=22ft -> row 11), NVZ lines (15ft, 29ft)
+  const ft2px = ftY => 20 + (ftY / (rows * m.heatmap_cell_ft)) * rows * S;
+  ctx.strokeStyle = '#4a5568'; ctx.lineWidth = 2;
+  ctx.strokeRect(20, 20, cols * S, rows * S);
+  [[15, '#4a5568'], [29, '#4a5568'], [22, '#8b98ab']].forEach(([ftY, col]) => {
+    ctx.strokeStyle = col; ctx.beginPath();
+    ctx.moveTo(20, ft2px(ftY)); ctx.lineTo(20 + cols * S, ft2px(ftY)); ctx.stroke();
+  });
+  ctx.fillStyle = '#8b98ab'; ctx.font = '11px sans-serif';
+  ctx.fillText('NET', 22 + cols * S, ft2px(22) + 4);
+}
+
+// ---------- sessions list ----------
+async function loadSessions() {
+  const list = await api('/sessions');
+  $('delBtn').disabled = true;
+  if (!list.length) { $('sessList').textContent = 'none yet'; return; }
+  $('sessList').innerHTML = list.map(s =>
+    `<div class="sess" onclick="openSession('${s.session_id}')">
+       <span><input type="checkbox" class="selBox" value="${s.session_id}"
+         onclick="event.stopPropagation(); updateDelBtn()" style="margin-right:10px; accent-color:var(--accent)">
+         ${s.label || s.filename || s.session_id}${s.known_dupr ? ' <span style="color:var(--accent2); font-size:12px">DUPR ' + s.known_dupr + '</span>' : ''}</span>
+       <span class="pill ${s.state}">${s.stage === 'done' ? 'complete' : s.stage + ' ' + s.state}</span></div>`).join('');
+}
+
+function selectedIds() {
+  return [...document.querySelectorAll('.selBox:checked')].map(b => b.value);
+}
+function updateDelBtn() {
+  const n = selectedIds().length;
+  $('delBtn').disabled = !n;
+  $('delBtn').textContent = n ? `Delete selected (${n})` : 'Delete selected';
+}
+async function deleteSelected() {
+  const ids = selectedIds();
+  if (!ids.length) return;
+  if (!confirm(`Permanently delete ${ids.length} session(s)? Video, analysis, and clips will be removed.`)) return;
+  const r = await api('/sessions/delete', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  });
+  if (r.errors && r.errors.length) alert('Some deletions failed: ' + r.errors.map(e => e.id + ': ' + e.error).join(', '));
+  loadSessions();
+}
+loadTrend();
+async function openSession(id) {
+  sid = id;
+  const s = await api('/session/' + id);
+  if (s.stage === 'done' && s.metrics) showResults(s);
+  else if (s.stage === 'ingest' && s.state === 'done') startCalib();
+  else if (s.state === 'error') alert('Session failed: ' + (s.error || 'unknown'));
+  else { show('proc'); waitFor(x => x.stage === 'done', showResults, 'Analyzing'); }
+}
+loadSessions();
+</script>
+</body>
+</html>
