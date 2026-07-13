@@ -16,29 +16,38 @@ reference client — the production UI (Claude Design) builds against this contr
  "played_at": "2026-07-05", "known_dupr": 3.75, "uploaded_at": 1720000000.0,
  "stage": "done", "state": "done", "overall": 1.0}
 ```
-`stage`: queued | ingest | tracking | metrics | events | shots | rating | done.
+`stage`: queued | ingest | tracking | metrics | events | shots | points | rating | done.
 `state`: queued | running | done | error (+ `error` message).
 
 ### `GET /session/{id}`
-→ status fields above + `meta` + (when ready) `metrics`, `events`, `shots`, `dupr`.
+→ status fields above + `meta` + (when ready) `metrics`, `events`, `shots`, `points`, `dupr`.
 While processing: `progress` (0–1 in stage), `overall` (0–1 whole job),
 `eta_seconds` (int, may be absent early).
 
 Key payload shapes:
 - `metrics`: `zone_pct{kitchen,transition,baseline}`, `distance_ft`, `avg_speed_ft_s`,
   `active_seconds`, `median_dist_from_net_ft`, `coverage_pct`, `heatmap` (22×10 grid,
-  2 ft cells, court length × width), `camera_cuts`, `warnings[]`.
+  2 ft cells, court length × width), `camera_cuts`, `subject_track_id`,
+  `opponent_track_id` (nullable), `warnings[]`.
 - `events`: `rally_count`, `total_hits`, `subject_shots`, `avg_rally_hits`,
   `max_rally_hits`, `avg_rally_seconds`, `play_time_pct`, `swing_count`,
+  `opponent_track_id` (nullable), `opponent_swing_count`,
   `rallies[{start,end,hits,duration}]` (seconds).
 - `shots`: `available` (false → `reason`), `ball{coverage,segments,frames,stride}`,
   `shots[{t,type}]` (type: drive|dink|drop|medium|unknown), `shot_mix{}`,
   `serves_measured`, `avg_serve_depth_from_baseline_ft`, `deep_serve_pct`.
+- `points`: `points_scored`, `points_won`, `points_lost`, `win_pct`,
+  `serve_win_pct`, `return_win_pct` (any may be `null` if not enough known-winner
+  rallies), `unforced_errors`, `caveat?` (present when ball tracking was
+  unavailable — winners then assume the rally's last shot was in),
+  `outcomes[{server,winner,unforced_error}]` (winner/server: subject|opponent|
+  unknown, aligned index-for-index with `events.rallies`).
 - `dupr`: `available`, `band` (quarter steps, e.g. 3.5), `band_raw`, `confidence`
   (0–1), `dimensions{name:{label,value,band,weight}}`, `caveats[]`, `tips[]`.
 
 ### `GET /session/{id}/frame` → first-frame JPEG (calibration backdrop)
 ### `GET /session/{id}/clip/{n}` → rally clip MP4 (n = rally index from `events.rallies`)
+### `GET /session/{id}/report.pdf` → one-page PDF summary (DUPR card, stats, tips). 409 if session isn't `done`.
 
 ### `POST /session/{id}/calibrate`
 ```json
@@ -67,6 +76,14 @@ fast). 409 otherwise. Queues analysis (`stage: queued`).
 ```
 `date` = `played_at` if set, else upload date. The fitness-app trend feed.
 
+### `GET /compare?a={id}&b={id}`
+→ `{a: {...summary}, b: {...summary}, diffs: {field: {a, b, delta}}}` for two
+`done` sessions (409 if either isn't). Summary fields: `kitchen_pct`,
+`transition_pct`, `distance_ft`, `avg_speed_ft_s`, `coverage_pct`, `rally_count`,
+`avg_rally_hits`, `play_time_pct`, `points_won`, `points_lost`, `win_pct`,
+`dupr_band`, `dupr_confidence` (plus `label`/`played_at`, excluded from `diffs`).
+`delta = b - a`; `null` when either side lacks the value (e.g. no DUPR estimate).
+
 ## UI guidance
 
 - Poll `GET /session/{id}` ~1.5 s while `state` ∈ {queued, running}; drive the
@@ -75,4 +92,7 @@ fast). 409 otherwise. Queues analysis (`stage: queued`).
   accuracy is a product feature.
 - `shots.available == false` is a normal outcome (ball untrackable), not an error;
   show `reason` and the rest of the results.
+- `points.outcomes[i].winner == "unknown"` is common and expected (noisy audio,
+  no clear swing match) — don't treat rows with unknown winners as errors; just
+  omit the win/loss badge for that rally.
 - DUPR framing: "your play resembles ~X.X", never a certified rating.
