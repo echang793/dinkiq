@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 
-from court import CourtCalibration, on_court
+from court import NET_Y, CourtCalibration, on_court
 
 MODEL_NAME = "yolov8n-pose.pt"
 # COCO keypoint indices
@@ -136,6 +136,46 @@ def stitch_subject(df: pd.DataFrame, first_id: int) -> pd.DataFrame:
     out = df[df["track_id"].isin(chain)].drop(columns=["cx", "cy"])
     # a frame can appear in overlapping fragments — keep the first occurrence
     return out.sort_values("frame").drop_duplicates("frame").reset_index(drop=True)
+
+
+def stitch_chain_ids(df: pd.DataFrame, first_id: int) -> set[int]:
+    """Track ids in the subject's stitched chain (see stitch_subject)."""
+    return set(stitch_subject(df, first_id)["track_id"].unique().tolist())
+
+
+MIN_OPPONENT_FRAMES = 30
+
+
+def pick_opponent(df: pd.DataFrame, calib: CourtCalibration,
+                  subject_ids: set[int], subject_median_y: float) -> int | None:
+    """Track id most likely to be the primary opponent.
+
+    Heuristic: exclude the subject's own chain, then score every remaining
+    track by (on-court frame count) x (fraction of those frames on the
+    opposite side of the net from the subject). This favors a consistently
+    visible player facing the subject over a stray spectator/ball-kid
+    detection or a doubles partner standing on the subject's own side.
+    Returns None if no reasonable candidate exists (e.g. subject not tracked
+    long enough to establish a side, or nobody else visible).
+    """
+    candidates = df[~df["track_id"].isin(subject_ids)]
+    if candidates.empty:
+        return None
+    subject_side = np.sign(subject_median_y - NET_Y)
+    best_id, best_score = None, 0.0
+    for tid, g in candidates.groupby("track_id"):
+        if len(g) < MIN_OPPONENT_FRAMES:
+            continue
+        pts = calib.to_court(feet_px(g))
+        on = np.array([on_court(x, y) for x, y in pts])
+        if not on.any():
+            continue
+        ys = pts[on, 1]
+        opp_frac = float(np.mean(np.sign(ys - NET_Y) != subject_side))
+        score = on.sum() * opp_frac
+        if score > best_score:
+            best_id, best_score = int(tid), score
+    return best_id
 
 
 def subject_court_positions(df: pd.DataFrame, subject_id: int,

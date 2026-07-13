@@ -8,7 +8,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 import pipeline
@@ -167,6 +167,58 @@ def _sdir(sid: str) -> Path:
     return d
 
 
+def _load_json(sdir: Path, name: str) -> dict:
+    f = sdir / name
+    return json.loads(f.read_text()) if f.exists() else {}
+
+
+def _compare_summary(sdir: Path) -> dict:
+    m = _load_json(sdir, "metrics.json")
+    ev = _load_json(sdir, "events.json")
+    pts = _load_json(sdir, "points.json")
+    dp = _load_json(sdir, "dupr.json")
+    meta = _load_json(sdir, "meta.json")
+    zp = m.get("zone_pct", {})
+    return {
+        "session_id": sdir.name,
+        "label": meta.get("label") or meta.get("filename") or sdir.name,
+        "played_at": meta.get("played_at"),
+        "kitchen_pct": zp.get("kitchen"),
+        "transition_pct": zp.get("transition"),
+        "distance_ft": m.get("distance_ft"),
+        "avg_speed_ft_s": m.get("avg_speed_ft_s"),
+        "coverage_pct": m.get("coverage_pct"),
+        "rally_count": ev.get("rally_count"),
+        "avg_rally_hits": ev.get("avg_rally_hits"),
+        "play_time_pct": ev.get("play_time_pct"),
+        "points_won": pts.get("points_won"),
+        "points_lost": pts.get("points_lost"),
+        "win_pct": pts.get("win_pct"),
+        "dupr_band": dp.get("band"),
+        "dupr_confidence": dp.get("confidence"),
+    }
+
+
+NON_METRIC_FIELDS = {"session_id", "label", "played_at"}
+
+
+@app.get("/api/compare")
+def compare(a: str, b: str):
+    da, db = _sdir(a), _sdir(b)
+    for d in (da, db):
+        if get_status(d).get("stage") != "done":
+            raise HTTPException(409, f"session {d.name} is not ready to compare")
+    sa, sb = _compare_summary(da), _compare_summary(db)
+    diffs = {}
+    for k in sa:
+        if k in NON_METRIC_FIELDS:
+            continue
+        va, vb = sa.get(k), sb.get(k)
+        delta = round(vb - va, 2) if isinstance(va, (int, float)) and isinstance(vb, (int, float)) else None
+        diffs[k] = {"a": va, "b": vb, "delta": delta}
+    return {"a": sa, "b": sb, "diffs": diffs}
+
+
 @app.get("/api/session/{sid}")
 def session(sid: str):
     sdir = _sdir(sid)
@@ -174,7 +226,8 @@ def session(sid: str):
     meta_f = sdir / "meta.json"
     resp["meta"] = json.loads(meta_f.read_text()) if meta_f.exists() else {}
     for key, fname in (("metrics", "metrics.json"), ("events", "events.json"),
-                       ("shots", "shots.json"), ("dupr", "dupr.json")):
+                       ("shots", "shots.json"), ("points", "points.json"),
+                       ("dupr", "dupr.json")):
         f = sdir / fname
         if f.exists():
             resp[key] = json.loads(f.read_text())
@@ -187,6 +240,24 @@ def clip(sid: str, n: int):
     if not f.exists():
         raise HTTPException(404, "clip not found")
     return FileResponse(f, media_type="video/mp4")
+
+
+@app.get("/api/session/{sid}/report.pdf")
+def report_pdf(sid: str):
+    from report import build_report_pdf
+
+    sdir = _sdir(sid)
+    if get_status(sdir).get("stage") != "done":
+        raise HTTPException(409, "session not ready for a report")
+
+    meta = _load_json(sdir, "meta.json")
+    pdf = build_report_pdf(meta, _load_json(sdir, "metrics.json"),
+                           _load_json(sdir, "events.json"),
+                           _load_json(sdir, "shots.json"),
+                           _load_json(sdir, "points.json"),
+                           _load_json(sdir, "dupr.json"))
+    return Response(content=pdf, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="picklecoach_{sid}.pdf"'})
 
 
 @app.get("/api/session/{sid}/frame")

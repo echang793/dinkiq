@@ -23,11 +23,13 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from court import CourtCalibration
+from court import NET_Y, CourtCalibration
 from events import (attribute_hits, detect_hits, detect_swings, rally_metrics,
                     segment_rallies, wrist_speed)
 from metrics import compute_metrics
-from tracking import pick_subject, run_tracking, subject_court_positions
+from points import attribute_hitters, point_summary, rally_outcomes
+from tracking import (pick_opponent, pick_subject, run_tracking, stitch_chain_ids,
+                      stitch_subject, subject_court_positions)
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSIONS = ROOT / "data" / "sessions"
@@ -45,7 +47,8 @@ def session_dir(sid: str) -> Path:
 # rough share of analysis wall-clock per stage (tracking dominates; measured
 # on the benchmark clip) — used for the overall progress bar + ETA
 STAGE_WEIGHTS = {"queued": 0.0, "tracking": 0.80, "metrics": 0.82,
-                 "events": 0.90, "shots": 0.97, "rating": 1.0, "done": 1.0}
+                 "events": 0.90, "shots": 0.97, "points": 0.99,
+                 "rating": 1.0, "done": 1.0}
 
 
 def set_status(sdir: Path, stage: str, state: str, error: str | None = None,
@@ -85,7 +88,7 @@ def _run(cmd: list[str]) -> None:
 # are pixel-space (calibration-independent) and deliberately survive so
 # recalibration takes seconds instead of re-running detection
 DERIVED = ["positions.parquet", "metrics.json", "events.json", "shots.json",
-           "dupr.json"]
+           "points.json", "dupr.json"]
 
 
 def clear_derived(sdir: Path) -> None:
@@ -178,13 +181,14 @@ def ingest(sdir: Path, raw: Path) -> None:
         set_status(sdir, "ingest", "error", str(e))
 
 
-def events(sdir: Path, tracks: pd.DataFrame, subject: int,
+def events(sdir: Path, tracks: pd.DataFrame, subject: int, opponent: int | None,
            hit_times: np.ndarray | None = None):
     """M2: paddle hits from audio, rallies, swings, per-rally clips.
 
     Degrades gracefully: no/quiet audio -> events.json records zero rallies.
     hit_times may be precomputed (analyze runs audio concurrently with tracking).
-    Returns (hit_times, subject_hits, rallies) for the M3 shots stage.
+    Returns (hit_times, subject_hits, rallies, hitters) — hitters is a per-hit
+    'subject'/'opponent'/'unknown' label for the points stage.
     """
     audio = sdir / "audio.wav"
     duration = float(tracks["frame"].max() + 1) / FPS if len(tracks) else 0.0
@@ -192,13 +196,21 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int,
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
     rallies = segment_rallies(hit_times)
 
-    from tracking import stitch_subject
     sub = stitch_subject(tracks, subject) if len(tracks) else tracks
-    swings = detect_swings(wrist_speed(sub, FPS)) if len(sub) else np.array([])
-    subject_hits = attribute_hits(hit_times, swings)
+    subject_swings = detect_swings(wrist_speed(sub, FPS)) if len(sub) else np.array([])
+    subject_hits = attribute_hits(hit_times, subject_swings)
+
+    if opponent is not None and len(tracks):
+        opp = stitch_subject(tracks, opponent)
+        opponent_swings = detect_swings(wrist_speed(opp, FPS)) if len(opp) else np.array([])
+    else:
+        opponent_swings = np.array([])
+    hitters = attribute_hitters(hit_times, subject_swings, opponent_swings)
 
     ev = rally_metrics(rallies, hit_times, subject_hits, duration)
-    ev["swing_count"] = int(len(swings))
+    ev["swing_count"] = int(len(subject_swings))
+    ev["opponent_track_id"] = opponent
+    ev["opponent_swing_count"] = int(len(opponent_swings))
     (sdir / "events.json").write_text(json.dumps(ev))
 
     clips = sdir / "clips"
@@ -212,14 +224,18 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int,
         # stream copy: keyframe-aligned (may start slightly early — fine, it's padding)
         _run(["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", str(sdir / "video.mp4"),
               "-t", f"{dur:.2f}", "-c", "copy", "-an", str(out)])
-    return hit_times, subject_hits, rallies
+    return hit_times, subject_hits, rallies, hitters
 
 
 def shots_stage(sdir: Path, calib: CourtCalibration,
                 pos: pd.DataFrame, hit_times, subject_hits, rallies,
                 corners_px: list[list[float]],
-                ball: pd.DataFrame, ball_stats: dict) -> None:
-    """M3: bounces, shot classification, serve depth (ball track prebuilt)."""
+                ball: pd.DataFrame, ball_stats: dict) -> pd.DataFrame:
+    """M3: bounces, shot classification, serve depth (ball track prebuilt).
+
+    Returns bounces_court (court-feet coords) so the points stage can reuse
+    it for in/out calls without recomputing bounce detection.
+    """
     from ball import detect_bounces
     from shots import shot_report
 
@@ -234,6 +250,16 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
     report = shot_report(hit_times, subject_hits, ball, ball_stats, pos,
                          rallies, corners_px, bounces_court, FPS)
     (sdir / "shots.json").write_text(json.dumps(report))
+    return bounces_court
+
+
+def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
+                 bounces_court: pd.DataFrame, ball_available: bool) -> None:
+    """Rally winners + serve/return win rates from hitter attribution."""
+    outcomes = rally_outcomes(rallies, hit_times, hitters,
+                              bounces_court if ball_available else None)
+    summary = point_summary(outcomes, ball_available)
+    (sdir / "points.json").write_text(json.dumps({"outcomes": outcomes, **summary}))
 
 
 def analyze(sdir: Path) -> None:
@@ -308,20 +334,31 @@ def analyze(sdir: Path) -> None:
         pos = subject_court_positions(tracks, subject, calib, FPS)
         pos.to_parquet(sdir / "positions.parquet", index=False)
 
+        subject_ids = stitch_chain_ids(tracks, subject) if len(tracks) else {subject}
+        subject_median_y = float(np.median(pos["y"])) if len(pos) else NET_Y
+        opponent = pick_opponent(tracks, calib, subject_ids, subject_median_y) \
+            if len(tracks) else None
+
         cuts_f = sdir / "cuts.json"
         n_cuts = len(json.loads(cuts_f.read_text())["cut_frames"]) if cuts_f.exists() else 0
         m = compute_metrics(pos, FPS, camera_cuts=n_cuts)
         m["subject_track_id"] = subject
+        m["opponent_track_id"] = opponent
         (sdir / "metrics.json").write_text(json.dumps(m))
 
         set_status(sdir, "events", "running")
         audio_thread.join(timeout=120)
-        hit_times, subject_hits, rallies = events(
-            sdir, tracks, subject, hit_times=audio_result.get("hits"))
+        hit_times, subject_hits, rallies, hitters = events(
+            sdir, tracks, subject, opponent, hit_times=audio_result.get("hits"))
 
         set_status(sdir, "shots", "running")
-        shots_stage(sdir, calib, pos, hit_times, subject_hits, rallies,
-                    calib_data["corners_px"], ball, ball_stats)
+        bounces_court = shots_stage(sdir, calib, pos, hit_times, subject_hits, rallies,
+                                    calib_data["corners_px"], ball, ball_stats)
+
+        set_status(sdir, "points", "running")
+        shots_report = json.loads((sdir / "shots.json").read_text())
+        points_stage(sdir, rallies, hit_times, hitters, bounces_court,
+                    ball_available=bool(shots_report.get("available")))
 
         set_status(sdir, "rating", "running")
         from dupr import estimate

@@ -8,8 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from court import CourtCalibration
-from tracking import stitch_subject
+from court import NET_Y, CourtCalibration
+from tracking import feet_px, pick_opponent, stitch_chain_ids, stitch_subject
 
 
 def _frag(tid: int, f0: int, n: int, x0: float, y0: float, dx: float = 2.0) -> pd.DataFrame:
@@ -67,8 +67,37 @@ def test_kitchen_anchored_homography_beats_bad_corners():
     assert err_anchored < 1.0, f"anchored error {err_anchored:.2f} ft too large"
 
 
+CAMERA_CORNERS = [[400.0, 200.0], [880.0, 200.0], [1180.0, 680.0], [100.0, 680.0]]
+
+
+def test_pick_opponent_finds_far_side_player():
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)     # near-bottom pixels: subject's baseline
+    partner = _frag(2, 0, 200, 300, 600)     # same side as subject (doubles partner)
+    opponent = _frag(3, 0, 200, 700, 100)    # far-top pixels: other side of the net
+    spectator = _frag(4, 0, 10, 700, 100)    # opponent-side position but too few frames
+    df = pd.concat([subject, partner, opponent, spectator], ignore_index=True)
+
+    subject_ids = stitch_chain_ids(df, 1)
+    subject_y = float(np.median(calib.to_court(feet_px(subject))[:, 1]))
+    assert (subject_y - NET_Y) > 0  # sanity: subject really is on the "near" side
+
+    opp = pick_opponent(df, calib, subject_ids, subject_y)
+    assert opp == 3, opp
+
+
+def test_pick_opponent_none_when_nobody_else_visible():
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)
+    subject_ids = stitch_chain_ids(subject, 1)
+    subject_y = float(np.median(calib.to_court(feet_px(subject))[:, 1]))
+    assert pick_opponent(subject, calib, subject_ids, subject_y) is None
+
+
 if __name__ == "__main__":
     for fn in [test_stitch_follows_across_id_breaks, test_stitch_respects_gap_and_distance,
-               test_kitchen_anchored_homography_beats_bad_corners]:
+               test_kitchen_anchored_homography_beats_bad_corners,
+               test_pick_opponent_finds_far_side_player,
+               test_pick_opponent_none_when_nobody_else_visible]:
         fn()
         print(f"ok {fn.__name__}")

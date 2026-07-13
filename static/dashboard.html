@@ -69,6 +69,24 @@
       <h2>Progress over time</h2>
       <div id="trend" style="color:var(--muted); font-size:14px">no completed sessions yet</div>
     </div>
+    <div class="card">
+      <h2>Compare sessions</h2>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end">
+        <label style="font-size:12px; color:var(--muted)">Session A<br>
+          <select id="cmpA" style="background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; min-width:180px"></select></label>
+        <label style="font-size:12px; color:var(--muted)">Session B<br>
+          <select id="cmpB" style="background:var(--card2); color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; min-width:180px"></select></label>
+        <button class="ghost" onclick="goCompare()">Compare</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="compare" class="hidden">
+    <a class="back" onclick="goHome()">&larr; sessions</a>
+    <div class="card">
+      <h2>Comparison</h2>
+      <div id="compareTable"></div>
+    </div>
   </div>
 
   <div id="calib" class="hidden">
@@ -102,6 +120,7 @@
       <div style="display:flex; gap:8px">
         <button class="ghost" onclick="startCalib()">Recalibrate</button>
         <button class="ghost" onclick="reanalyze()">Re-analyze</button>
+        <button class="ghost" onclick="downloadReport()">Download report</button>
       </div>
     </div>
     <div class="card">
@@ -138,6 +157,11 @@
       <div class="bars" id="shotMix" style="margin-top:12px"></div>
       <div id="shotNote" style="color:var(--muted); font-size:13px; margin-top:8px"></div>
     </div>
+    <div class="card" id="pointsCard">
+      <h2>Points</h2>
+      <div class="grid" id="pointStats"></div>
+      <div id="pointNote" style="color:var(--muted); font-size:13px; margin-top:8px"></div>
+    </div>
     <div class="card" id="rallyCard">
       <h2>Rallies</h2>
       <div class="grid" id="rallyStats"></div>
@@ -153,7 +177,7 @@ const api = (p, opt) => fetch('/api' + p, opt).then(r => { if (!r.ok) return r.j
 let sid = null, calClicks = [], calImg = null, pollTimer = null;
 
 function show(id) {
-  ['home','calib','proc','results'].forEach(s => $(s).classList.toggle('hidden', s !== id));
+  ['home','calib','proc','results','compare'].forEach(s => $(s).classList.toggle('hidden', s !== id));
 }
 function goHome() { clearInterval(pollTimer); show('home'); loadSessions(); loadTrend(); }
 
@@ -193,7 +217,7 @@ async function doUpload(f) {
 
 const STAGE_NAMES = { queued: 'waiting in queue', tracking: 'tracking players & ball',
   metrics: 'computing court metrics', events: 'finding rallies', shots: 'classifying shots',
-  rating: 'estimating your level', ingest: 'preparing video' };
+  points: 'scoring points', rating: 'estimating your level', ingest: 'preparing video' };
 function fmtEta(s) {
   if (s == null || !isFinite(s) || s <= 0) return '';
   const m = Math.floor(s / 60), sec = Math.round(s % 60);
@@ -331,9 +355,27 @@ async function showResults(s) {
   $('metricWarn').innerHTML = (m.warnings || []).map(w =>
     `<div class="coach" style="border-color:#ff6b6b">⚠ ${w}</div>`).join('');
   drawHeatmap(m);
-  renderRallies(s.events);
+  renderRallies(s.events, s.points);
   renderShots(s.shots);
+  renderPoints(s.points);
   renderDupr(s.dupr, m);
+}
+
+function renderPoints(p) {
+  $('pointStats').innerHTML = ''; $('pointNote').textContent = '';
+  if (!p || !p.points_scored) {
+    $('pointNote').textContent = p && p.outcomes && p.outcomes.length
+      ? 'No rally winners could be determined (need a visible opponent and clear last shots).'
+      : 'Point outcomes not computed for this session.';
+    return;
+  }
+  $('pointStats').innerHTML =
+    statCard(p.points_won + '–' + p.points_lost, 'points won–lost', true) +
+    statCard(p.win_pct + '%', 'overall win rate') +
+    statCard(p.serve_win_pct != null ? p.serve_win_pct + '%' : '—', 'win% on serve') +
+    statCard(p.return_win_pct != null ? p.return_win_pct + '%' : '—', 'win% on return') +
+    statCard(p.unforced_errors, 'unforced errors');
+  if (p.caveat) $('pointNote').textContent = '⚠ ' + p.caveat;
 }
 
 function renderDupr(d, m) {
@@ -384,7 +426,7 @@ function renderShots(sh) {
   }).join('');
 }
 
-function renderRallies(ev) {
+function renderRallies(ev, points) {
   const card = $('rallyCard');
   if (!ev || !ev.rally_count) {
     card.classList.remove('hidden');
@@ -400,10 +442,16 @@ function renderRallies(ev) {
     statCard(ev.max_rally_hits, 'longest rally (hits)') +
     statCard(ev.avg_rally_seconds + 's', 'avg rally length') +
     statCard(ev.play_time_pct + '%', 'time in play');
-  $('rallyList').innerHTML = ev.rallies.map((r, i) =>
-    `<div class="sess" onclick="playClip(${i})">
+  const outcomes = (points && points.outcomes) || [];
+  $('rallyList').innerHTML = ev.rallies.map((r, i) => {
+    const o = outcomes[i];
+    let badge = '';
+    if (o && o.winner === 'subject') badge = `<span class="pill done">won${o.unforced_error ? ' (opp error)' : ''}</span>`;
+    else if (o && o.winner === 'opponent') badge = `<span class="pill error">lost${o.unforced_error ? ' (your error)' : ''}</span>`;
+    return `<div class="sess" onclick="playClip(${i})">
        <span>Rally ${i + 1} — ${r.hits} hits, ${r.duration}s</span>
-       <span class="pill">▶ watch</span></div>`).join('');
+       <span style="display:flex; gap:6px">${badge}<span class="pill">▶ watch</span></span></div>`;
+  }).join('');
 }
 
 function fillMeta(meta) {
@@ -428,6 +476,15 @@ async function reanalyze() {
   await api('/session/' + sid + '/reprocess', { method: 'POST' });
   show('proc');
   waitFor(s => s.stage === 'done', showResults, 'Re-analyzing');
+}
+
+function downloadReport() {
+  const a = document.createElement('a');
+  a.href = '/api/session/' + sid + '/report.pdf';
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function playClip(i) {
@@ -473,6 +530,45 @@ async function loadSessions() {
          onclick="event.stopPropagation(); updateDelBtn()" style="margin-right:10px; accent-color:var(--accent)">
          ${s.label || s.filename || s.session_id}${s.known_dupr ? ' <span style="color:var(--accent2); font-size:12px">DUPR ' + s.known_dupr + '</span>' : ''}</span>
        <span class="pill ${s.state}">${s.stage === 'done' ? 'complete' : s.stage + ' ' + s.state}</span></div>`).join('');
+
+  const done = list.filter(s => s.stage === 'done');
+  const opts = done.map(s => `<option value="${s.session_id}">${s.label || s.filename || s.session_id}</option>`).join('');
+  $('cmpA').innerHTML = opts; $('cmpB').innerHTML = opts;
+  if (done.length > 1) $('cmpB').selectedIndex = 1;
+}
+
+const CMP_FIELDS = [
+  ['kitchen_pct', 'time at kitchen', '%'], ['transition_pct', "time in no-man's land", '%'],
+  ['distance_ft', 'distance covered', ' ft'], ['coverage_pct', 'court coverage', '%'],
+  ['rally_count', 'rallies', ''], ['avg_rally_hits', 'avg hits/rally', ''],
+  ['play_time_pct', 'time in play', '%'], ['points_won', 'points won', ''],
+  ['points_lost', 'points lost', ''], ['win_pct', 'win rate', '%'],
+  ['dupr_band', 'DUPR estimate', ''], ['dupr_confidence', 'DUPR confidence', 'pct100'],
+];
+async function goCompare() {
+  const a = $('cmpA').value, b = $('cmpB').value;
+  if (!a || !b || a === b) { alert('pick two different sessions'); return; }
+  const r = await api(`/compare?a=${a}&b=${b}`);
+  show('compare');
+  const fmt = (v, unit) => v == null ? '—' : unit === 'pct100' ? Math.round(v * 100) + '%' : v + unit;
+  $('compareTable').innerHTML = `
+    <table style="width:100%; border-collapse:collapse; font-size:14px">
+      <tr style="color:var(--muted); text-align:left">
+        <th style="padding:6px 4px">metric</th>
+        <th>${r.a.label}</th><th>${r.b.label}</th><th>Δ</th></tr>
+      ${CMP_FIELDS.map(([k, label, unit]) => {
+        const d = r.diffs[k];
+        const arrow = d.delta == null ? '' : d.delta > 0 ? ' ▲' : d.delta < 0 ? ' ▼' : '';
+        const lowerBetter = k === 'transition_pct' || k === 'points_lost';
+        const color = d.delta == null || d.delta === 0 ? 'var(--muted)'
+          : (lowerBetter ? d.delta < 0 : d.delta > 0) ? 'var(--accent)' : '#ff6b6b';
+        return `<tr style="border-top:1px solid var(--line)">
+          <td style="padding:8px 4px">${label}</td>
+          <td>${fmt(d.a, unit)}</td><td>${fmt(d.b, unit)}</td>
+          <td style="color:${color}">${d.delta == null ? '—' : (d.delta > 0 ? '+' : '') + (unit === 'pct100' ? Math.round(d.delta * 100) + '%' : d.delta + unit)}${arrow}</td>
+        </tr>`;
+      }).join('')}
+    </table>`;
 }
 
 function selectedIds() {

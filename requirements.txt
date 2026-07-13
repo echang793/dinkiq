@@ -9,3 +9,4 @@ pyarrow>=17.0
 librosa>=0.10
 httpx2
 pytest
+reportlab>=4.0
