@@ -82,15 +82,27 @@ def sessions():
             if d.is_dir():
                 meta_f = d / "meta.json"
                 meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
-                out.append({
+                status = get_status(d)
+                row = {
                     "session_id": d.name,
                     "filename": meta.get("filename"),
                     "label": meta.get("label"),
                     "played_at": meta.get("played_at"),
                     "known_dupr": meta.get("known_dupr"),
                     "uploaded_at": d.stat().st_mtime,
-                    **get_status(d),
-                })
+                    **status,
+                }
+                if status.get("stage") == "done":
+                    # summary fields the sessions list/table renders directly —
+                    # real numbers, not a UI placeholder, for every completed row
+                    m = _load_json(d, "metrics.json")
+                    ev = _load_json(d, "events.json")
+                    dp = _load_json(d, "dupr.json")
+                    row["kitchen_pct"] = m.get("zone_pct", {}).get("kitchen")
+                    row["avg_rally_hits"] = ev.get("avg_rally_hits")
+                    row["dupr_band"] = dp.get("band")
+                    row["dupr_confidence"] = dp.get("confidence")
+                out.append(row)
     return out
 
 
