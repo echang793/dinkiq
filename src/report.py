@@ -72,7 +72,7 @@ def build_report_pdf(meta: dict, metrics: dict, events: dict, shots: dict,
     story = []
 
     title = meta.get("label") or meta.get("filename") or "Session report"
-    story.append(Paragraph("PickleCoach", ss["H1"]))
+    story.append(Paragraph("DinkIQ", ss["H1"]))
     story.append(Paragraph(f"{title} &middot; {meta.get('played_at', '')}", ss["Sub"]))
 
     if dupr and dupr.get("available"):

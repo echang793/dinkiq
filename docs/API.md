@@ -1,4 +1,4 @@
-# PickleCoach API contract
+# DinkIQ API contract
 
 Base: `http://127.0.0.1:8100/api`. All responses JSON. `static/dashboard.html` is a
 reference client — the production UI (Claude Design) builds against this contract.

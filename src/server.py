@@ -1,4 +1,4 @@
-"""Pickle Coach — FastAPI server: upload, calibrate, process, results, SPA."""
+"""DinkIQ — FastAPI server: upload, calibrate, process, results, SPA."""
 
 import json
 import shutil
@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
 ALLOWED_EXT = {".mp4", ".mov", ".m4v"}
 
-app = FastAPI(title="Pickle Coach")
+app = FastAPI(title="DinkIQ")
 
 
 class Calibration(BaseModel):
@@ -269,7 +269,7 @@ def report_pdf(sid: str):
                            _load_json(sdir, "points.json"),
                            _load_json(sdir, "dupr.json"))
     return Response(content=pdf, media_type="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="picklecoach_{sid}.pdf"'})
+        "Content-Disposition": f'attachment; filename="dinkiq_{sid}.pdf"'})
 
 
 @app.get("/api/session/{sid}/frame")

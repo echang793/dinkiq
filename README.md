@@ -1,4 +1,4 @@
-# PickleCoach
+# DinkIQ
 
 Upload pickleball match film → computer-vision analysis → coaching feedback and a
 DUPR-style skill estimate. "A pickleball coach that fits in your pocket."
