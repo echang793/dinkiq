@@ -36,6 +36,13 @@
   /* ---------- top bar ---------- */
   .top{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:14px;padding:11px 32px;
     background:rgba(6,12,26,.84);backdrop-filter:blur(14px);border-bottom:2px solid var(--accent)}
+  @media (max-width:640px){
+    .top{padding:11px 14px;gap:8px}
+    .top .livechip,.top .skins{display:none}
+    .top .logo b{font-size:14px}
+    .top .navlist{gap:0}
+    .top .navlist span{padding:9px 8px;font-size:11px;letter-spacing:.02em}
+  }
   .logo{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none}
   .logo .bug{background:var(--accent);color:var(--accentink);font:400 13px/1 var(--disp);padding:7px 9px;border-radius:4px;transform:skewX(-8deg);transition:transform .4s var(--ease)}
   .logo:hover .bug{transform:skewX(-8deg) rotate(-7deg) scale(1.1)}
@@ -358,7 +365,7 @@
   .mseg{flex:1;border-radius:2px;transform-origin:bottom;animation:msegin .45s var(--ease) both}
   @keyframes msegin{from{transform:scaleY(0)}to{transform:scaleY(1)}}
   /* ambient HUD: particle court + grid + scanlines + corner brackets */
-  #fxCourt{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.55}
+  #fxCourt{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;opacity:.55}
   #fxGrid{position:fixed;inset:-70px;z-index:-1;pointer-events:none;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:72px 72px;opacity:.20;-webkit-mask-image:radial-gradient(75% 70% at 50% 42%,#000,transparent 78%);mask-image:radial-gradient(75% 70% at 50% 42%,#000,transparent 78%);will-change:transform}
   .scanfx{position:fixed;inset:0;z-index:96;pointer-events:none;background:repeating-linear-gradient(0deg,rgba(255,255,255,.016) 0 1px,transparent 1px 3px);mix-blend-mode:overlay}
   .hudcnr{position:fixed;width:22px;height:22px;z-index:96;pointer-events:none;border:2px solid var(--accent);opacity:.4}
@@ -513,6 +520,7 @@
       <div class="calbtns">
         <button class="ghost sm" onclick="undoCal()">Undo point</button>
         <button class="ghost sm" onclick="resetCal()">Start over</button>
+        <button class="ghost sm" id="calReuseBtn" onclick="reuseLastCalibration()" style="display:none">Use last calibration</button>
         <button id="calGo" onclick="submitCal()" disabled>Analyze session →</button>
         <span class="n">zoom loupe follows your cursor</span>
       </div>
@@ -539,7 +547,7 @@
   <section class="screen" id="results">
     <div class="rhead">
       <span class="back" onclick="goHome()" style="margin:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
-      <div style="display:flex;gap:9px">
+      <div style="display:flex;flex-wrap:wrap;gap:9px">
         <button class="ghost sm" onclick="downloadReport()">Download report (PDF)</button>
         <button class="ghost sm" onclick="downloadHighlights()">Download highlights</button>
         <button class="ghost sm" onclick="startCalib()">Recalibrate</button>
@@ -561,11 +569,17 @@
         <div class="figwrap"><canvas id="subjCanvas"></canvas></div>
         <div class="heatnote" id="subjNote">solid = YOU · dashed = opponent</div>
       </div>
+      <div class="figcard" id="ballTrajCard" style="display:none">
+        <h2><span class="num">Fig.&nbsp;3</span> Ball trajectory</h2>
+        <div class="figwrap"><canvas id="ballTrajCanvas"></canvas></div>
+        <div class="heatnote">every detected bounce this session · brighter = later in the match</div>
+      </div>
     </div>
     <div class="card">
       <h2>Session info</h2>
       <div class="metafields">
         <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" style="width:220px"></div>
+        <div class="fld"><label>Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" style="width:160px"></div>
         <div class="fld"><label>Opponent</label><input id="mOpponent" placeholder="e.g. Sam" style="width:160px" onchange="loadHeadToHead()"></div>
         <div class="fld"><label>Played on</label><input id="mDate" type="date"></div>
         <div class="fld"><label>Known DUPR</label><input id="mDupr" type="number" step="0.05" min="2" max="8" style="width:120px"></div>
@@ -641,7 +655,7 @@
         <h1 class="ptitle">Sessions</h1>
         <p class="psub">Every match you've uploaded. Click any row to open its full breakdown.</p>
       </div>
-      <div style="display:flex;gap:9px">
+      <div style="display:flex;flex-wrap:wrap;gap:9px">
         <button class="ghost sm" id="cmpBtn" onclick="compareClicked()" disabled>Compare</button>
         <button class="ghost sm" id="delBtn" onclick="deleteClicked()" disabled>Delete selected</button>
         <button class="ghost sm" onclick="openTrash()">View trash</button>
@@ -696,6 +710,15 @@
     </div>
     <div class="card"><div class="grid" id="trendSummary"></div></div>
     <div class="card"><h2>Estimated level over time</h2><div id="trendChartBig"></div></div>
+    <div class="card" id="weakTrendCard" style="display:none">
+      <h2>Recurring weak point</h2>
+      <div class="bars" id="weakTrendBars" style="margin-top:8px"></div>
+      <div id="weakTrendNote" class="heatnote" style="margin-top:8px"></div>
+    </div>
+    <div class="card" id="leaderboardCard" style="display:none">
+      <h2>Leaderboard</h2>
+      <div id="leaderboardTable" style="overflow-x:auto"></div>
+    </div>
     <div class="card"><h2>Session history</h2><div id="trendTableBig" style="overflow-x:auto"></div></div>
   </section>
 
@@ -965,6 +988,7 @@ function calSteps() { return matchType === 'doubles' ? [...CAL_STEPS_BASE, CAL_S
 const PADF = 0.25;
 let calClicks = [], calImg = null, padX = 0, padY = 0;
 
+let lastCalibration = null;
 function startCalib() {
   clearInterval(pollTimer);
   show('calib'); calClicks = [];
@@ -976,9 +1000,27 @@ function startCalib() {
     c.width = calImg.width + 2 * padX;
     c.height = calImg.height + 2 * padY;
     drawCal();
+    checkLastCalibration();
   };
   calImg.src = frameURL();
   updateCalUI();
+}
+async function checkLastCalibration() {
+  const btn = $('calReuseBtn');
+  btn.style.display = 'none';
+  if (DEMO) return;
+  try { lastCalibration = await api('/last-calibration'); }
+  catch (e) { return; }
+  if (lastCalibration && lastCalibration.available) btn.style.display = 'inline-block';
+}
+function reuseLastCalibration() {
+  if (!lastCalibration || !lastCalibration.available) return;
+  const fs = lastCalibration.frame_size;
+  if (fs && calImg && (fs[0] !== calImg.width || fs[1] !== calImg.height)) {
+    toast('Heads up: last calibration was a different frame size — points may be off. Review before analyzing.', true);
+  }
+  calClicks = [...lastCalibration.corners_px, ...(lastCalibration.kitchen_px || [])];
+  drawCal(); updateCalUI();
 }
 function updateCalUI() {
   const steps = calSteps(), total = steps.length, n = calClicks.length;
@@ -1282,7 +1324,12 @@ function renderPoints(pt, ev) {
 }
 function renderShots(sh) {
   $('shotStats').innerHTML = ''; $('shotMix').innerHTML = ''; $('shotNote').innerHTML = '';
-  if (!sh) { $('shotNote').innerHTML = '<div class="empty">Shot analysis not run for this session.</div>'; return; }
+  if (!sh) {
+    $('shotNote').innerHTML = '<div class="empty">Shot analysis not run for this session.</div>';
+    $('ballTrajCard').style.display = 'none';
+    return;
+  }
+  loadBallTrajectory(sh);  // bounces may exist even when shot classification is unavailable
   if (!sh.available) {
     $('shotNote').innerHTML = '<div class="caveat">' + warnSVG + '<span>' + esc(sh.reason || 'Ball could not be tracked') +
       ' — the ball was hard to track in this footage. Positioning and rally stats are unaffected.</span></div>';
@@ -1310,14 +1357,14 @@ function renderShots(sh) {
   const withPos = (sh.shots || []).filter(s => s.x != null && s.y != null);
   const vizWrap = $('shotVizWrap');
   if (withPos.length) {
-    vizWrap.style.display = 'flex';
+    vizWrap.style.display = 'grid';
     drawShotHeatmap(withPos);
   } else {
     vizWrap.style.display = 'none';
   }
   const serveCard = $('serveVizCard');
   if (sh.serve_side_counts && Object.keys(sh.serve_side_counts).length) {
-    vizWrap.style.display = 'flex';
+    vizWrap.style.display = 'grid';
     serveCard.style.display = 'flex';
     const counts = sh.serve_side_counts, max = Math.max(1, ...Object.values(counts));
     $('serveMapBars').innerHTML = ['left','middle','right'].map(side => {
@@ -1359,6 +1406,32 @@ function drawShotHeatmap(shots) {
     '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">' +
     '<span style="width:9px;height:9px;border-radius:50%;background:' + (SHOT_TYPE_COLORS[t] || SHOT_TYPE_COLORS.unknown) + ';display:inline-block"></span>' +
     esc(t) + '</span>').join('');
+}
+
+async function loadBallTrajectory(sh) {
+  const card = $('ballTrajCard');
+  const bounces = (sh && sh.bounces_px) || [];
+  if (!bounces.length || DEMO) { card.style.display = 'none'; return; }
+  card.style.display = 'flex';
+  const img = new Image();
+  img.onload = () => drawBallTrajectory(img, bounces);
+  img.src = frameURL();
+}
+function drawBallTrajectory(img, bounces) {
+  const c = $('ballTrajCanvas'), ctx = c.getContext('2d');
+  c.width = img.width; c.height = img.height;
+  ctx.drawImage(img, 0, 0);
+  const tMax = Math.max(1e-6, ...bounces.map(b => b.t));
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  bounces.forEach(b => {
+    const alpha = 0.25 + 0.65 * (b.t / tMax);
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 5, 0, 7);
+    ctx.fillStyle = accent;
+    ctx.globalAlpha = alpha;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
 }
 
 function renderRallies(ev) {
@@ -1522,6 +1595,7 @@ function drawSubjectMarker(img, data, opponents) {
 /* ---------------- meta editing ---------------- */
 function fillMeta(meta) {
   $('mLabel').value = (meta && meta.label) || '';
+  $('mPlayer').value = (meta && meta.player) || '';
   $('mOpponent').value = (meta && meta.opponent) || '';
   $('mDate').value = (meta && meta.played_at) || '';
   $('mDupr').value = (meta && meta.known_dupr) || '';
@@ -1533,6 +1607,7 @@ function fillMeta(meta) {
 async function saveMeta() {
   const body = {};
   if ($('mLabel').value) body.label = $('mLabel').value;
+  if ($('mPlayer').value) body.player = $('mPlayer').value;
   if ($('mOpponent').value) body.opponent = $('mOpponent').value;
   if ($('mDate').value) body.played_at = $('mDate').value;
   if ($('mDupr').value) body.known_dupr = parseFloat($('mDupr').value);
@@ -1823,6 +1898,7 @@ async function restoreSession(id) {
 async function loadTrendsPage() {
   let pts;
   try { pts = await api('/progress'); } catch (e) { return; }
+  loadLeaderboard();
   if (!pts.length) {
     $('trendSummary').innerHTML = '<div class="empty">Complete a session to build your trends.</div>';
     $('trendChartBig').innerHTML = ''; $('trendTableBig').innerHTML = ''; return;
@@ -1852,6 +1928,46 @@ async function loadTrendsPage() {
     '<td class="num">' + (p.avg_rally_hits != null ? p.avg_rally_hits : '—') + '</td>' +
     '<td class="num">' + (p.distance_ft != null ? Math.round(p.distance_ft).toLocaleString() + ' ft' : '—') + '</td></tr>').join('');
   $('trendTableBig').innerHTML = '<table class="trend" style="min-width:520px"><tr><th>Date</th><th>Session</th><th>~DUPR</th><th>Kitchen time</th><th>Rally avg</th><th>Distance</th></tr>' + rows + '</table>';
+
+  const weakCard = $('weakTrendCard');
+  const flagged = pts.filter(p => p.weakest_dimension);
+  if (flagged.length) {
+    weakCard.style.display = 'block';
+    const tally = {};
+    flagged.forEach(p => { tally[p.weakest_label] = (tally[p.weakest_label] || 0) + 1; });
+    const ranked = Object.entries(tally).sort((a, b) => b[1] - a[1]);
+    const max = ranked[0][1];
+    $('weakTrendBars').innerHTML = ranked.map(([label, n]) =>
+      '<div class="bar"><span class="lb">' + esc(label) + '</span>' +
+      '<div class="track"><div class="fill" data-w="' + Math.round(100 * n / max) + '%" style="background:var(--amber)"></div></div>' +
+      '<span class="val">' + n + '/' + flagged.length + '</span></div>').join('');
+    animateBars($('weakTrendBars'));
+    const top = ranked[0];
+    $('weakTrendNote').textContent = top[1] > 1
+      ? top[0] + ' has been your weakest dimension in ' + top[1] + ' of your last ' + flagged.length + ' rated sessions — worth targeting.'
+      : 'No single dimension has repeated as your weakest yet — keep playing to build a pattern.';
+  } else {
+    weakCard.style.display = 'none';
+  }
+}
+
+async function loadLeaderboard() {
+  let data;
+  try { data = await api('/leaderboard'); } catch (e) { return; }
+  const rows = (data && data.players) || [];
+  const card = $('leaderboardCard');
+  if (rows.length < 2) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('leaderboardTable').innerHTML = '<table class="trend" style="min-width:480px"><tr>' +
+    '<th>#</th><th>Player</th><th>Sessions</th><th>Latest ~DUPR</th><th>Best ~DUPR</th><th>Win %</th></tr>' +
+    rows.map((r, i) =>
+      '<tr><td class="num">' + (i + 1) + '</td>' +
+      '<td>' + esc(r.player) + '</td>' +
+      '<td class="num">' + r.sessions + '</td>' +
+      '<td class="dupr">' + (r.latest_band != null ? '~' + r.latest_band : '—') + '</td>' +
+      '<td class="dupr">' + (r.best_band != null ? '~' + r.best_band : '—') + '</td>' +
+      '<td class="num">' + (r.win_pct != null ? r.win_pct + '%' : '—') + '</td></tr>').join('') +
+    '</table>';
 }
 
 /* ---------------- trend ---------------- */
@@ -2165,6 +2281,7 @@ function runPortal(r0) {
   }
   targets();
   addEventListener('resize', targets);
+  if (window.ResizeObserver) new ResizeObserver(targets).observe(document.documentElement);
   addEventListener('pointermove', e => {
     mx = e.clientX; my = e.clientY;
     const px = e.clientX / W - .5, py = e.clientY / H - .5;

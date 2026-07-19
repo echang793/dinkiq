@@ -40,6 +40,9 @@ tailscale funnel 8100              # in another terminal — prints the public h
   prompt (any username, that password) — leave it unset for local-only use.
 - `tailscale funnel status` shows the current public URL; `tailscale funnel off`
   stops sharing.
+- `DINKIQ_WEBHOOK_URL` (optional): a Discord webhook URL. Set it to get pinged
+  when a session finishes analyzing (or fails) instead of watching the
+  progress bar — analysis can take minutes.
 
 ## Pipeline (per session, artifacts under `data/sessions/<id>/`)
 

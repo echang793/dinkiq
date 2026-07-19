@@ -72,6 +72,7 @@ class MetaPatch(BaseModel):
     known_dupr: float | None = Field(default=None, ge=2.0, le=8.0)
     notes: str | None = Field(default=None, max_length=500)
     opponent: str | None = Field(default=None, max_length=80)
+    player: str | None = Field(default=None, max_length=80)
     context: str | None = Field(default=None)
 
     @field_validator("context")
@@ -201,6 +202,7 @@ def sessions(label: str | None = None, opponent: str | None = None,
                 "known_dupr": meta.get("known_dupr"),
                 "notes": meta.get("notes"),
                 "opponent": meta.get("opponent"),
+                "player": meta.get("player"),
                 "context": meta.get("context"),
                 "uploaded_at": d.stat().st_mtime,
                 **status,
@@ -240,6 +242,7 @@ def progress():
             meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
             date = meta.get("played_at") or datetime.date.fromtimestamp(
                 d.stat().st_mtime).isoformat()
+            drill = dp.get("drill") or {}
             points.append({
                 "session_id": d.name,
                 "label": meta.get("label") or meta.get("filename"),
@@ -251,6 +254,8 @@ def progress():
                 "dupr_band": dp.get("band"),
                 "dupr_confidence": dp.get("confidence"),
                 "known_dupr": meta.get("known_dupr"),
+                "weakest_dimension": drill.get("dimension"),
+                "weakest_label": drill.get("target_label"),
             })
     points.sort(key=lambda p: p["date"])
     return points
@@ -465,6 +470,44 @@ def opponent_history(name: str):
     }
 
 
+DEFAULT_PLAYER_NAME = "You"
+
+
+@app.get("/api/leaderboard")
+def leaderboard():
+    """Rank players — whoever's footage a session belongs to, via the
+    `player` meta field — by latest skill estimate, aggregated across all
+    of their completed sessions. Sessions with no `player` set (everything
+    that predates this field) fall under DEFAULT_PLAYER_NAME, so a
+    single-user history still shows up as one row."""
+    by_player: dict[str, list[dict]] = {}
+    if SESSIONS.exists():
+        for d in sorted(SESSIONS.iterdir(), key=lambda p: p.stat().st_mtime):
+            if not d.is_dir() or d == TRASH:
+                continue
+            if get_status(d).get("stage") != "done":
+                continue
+            meta = _load_json(d, "meta.json")
+            name = (meta.get("player") or "").strip() or DEFAULT_PLAYER_NAME
+            by_player.setdefault(name, []).append(_compare_summary(d))
+
+    rows = []
+    for name, sessions in by_player.items():
+        bands = [s["dupr_band"] for s in sessions if s["dupr_band"] is not None]
+        won = sum(s["points_won"] or 0 for s in sessions)
+        lost = sum(s["points_lost"] or 0 for s in sessions)
+        rows.append({
+            "player": name,
+            "sessions": len(sessions),
+            "latest_band": bands[-1] if bands else None,
+            "best_band": max(bands) if bands else None,
+            "win_pct": round(100.0 * won / (won + lost), 1) if (won + lost) else None,
+            "total_distance_ft": round(sum(s["distance_ft"] or 0 for s in sessions), 1),
+        })
+    rows.sort(key=lambda r: (r["latest_band"] is None, -(r["latest_band"] or 0)))
+    return {"players": rows}
+
+
 @app.get("/api/session/{sid}")
 def session(sid: str):
     sdir = _sdir(sid)
@@ -575,6 +618,9 @@ def _calibratable(status: dict) -> bool:
     return state in ("done", "error")
 
 
+LAST_CALIBRATION_PATH = SESSIONS.parent / "last_calibration.json"
+
+
 @app.post("/api/session/{sid}/calibrate")
 def calibrate(sid: str, cal: Calibration):
     sdir = _sdir(sid)
@@ -585,8 +631,28 @@ def calibrate(sid: str, cal: Calibration):
         raise HTTPException(400, "doubles sessions require partner_px")
     pipeline.clear_derived(sdir)  # keep tracks/ball parquets: pixel-space, reusable
     (sdir / "calibration.json").write_text(cal.model_dump_json())
+    # court corners/kitchen corners are worth reusing for a fixed camera setup —
+    # self/partner clicks are NOT saved, those need a fresh click every session
+    frame_f = sdir / "frame0.jpg"
+    frame_size = None
+    if frame_f.exists():
+        info = pipeline.probe_video(frame_f)  # ffprobe reads a still frame fine too
+        if info.get("width") and info.get("height"):
+            frame_size = [info["width"], info["height"]]
+    LAST_CALIBRATION_PATH.write_text(json.dumps({
+        "corners_px": cal.corners_px, "kitchen_px": cal.kitchen_px,
+        "frame_size": frame_size,
+    }))
     pipeline.enqueue_analyze(sdir)
     return {"ok": True}
+
+
+@app.get("/api/last-calibration")
+def last_calibration():
+    if not LAST_CALIBRATION_PATH.exists():
+        return {"available": False}
+    data = json.loads(LAST_CALIBRATION_PATH.read_text())
+    return {"available": True, **data}
 
 
 @app.post("/api/session/{sid}/reprocess")

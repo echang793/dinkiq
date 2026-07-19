@@ -42,5 +42,41 @@ def test_friendly_error_maps_known_ffmpeg_failures():
     assert pipeline._friendly_error("some unrelated error") == "some unrelated error"
 
 
+def test_notify_webhook_noop_without_url(monkeypatch, tmp_path):
+    monkeypatch.delenv("DINKIQ_WEBHOOK_URL", raising=False)
+    calls = []
+    monkeypatch.setattr("requests.post", lambda *a, **kw: calls.append((a, kw)))
+    pipeline.notify_webhook(tmp_path, ok=True)
+    assert calls == []
+
+
+def test_notify_webhook_posts_when_url_set(monkeypatch, tmp_path):
+    monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://example.invalid/hook")
+    (tmp_path / "meta.json").write_text('{"label": "Test Session"}')
+    calls = []
+    monkeypatch.setattr("requests.post", lambda url, json, timeout: calls.append((url, json, timeout)))
+    pipeline.notify_webhook(tmp_path, ok=True)
+    assert len(calls) == 1
+    url, payload, timeout = calls[0]
+    assert url == "https://example.invalid/hook"
+    assert "Test Session" in payload["content"]
+    assert "finished" in payload["content"]
+
+
+def test_notify_webhook_error_message_included(monkeypatch, tmp_path):
+    monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://example.invalid/hook")
+    calls = []
+    monkeypatch.setattr("requests.post", lambda url, json, timeout: calls.append(json))
+    pipeline.notify_webhook(tmp_path, ok=False, error="ball coverage too low")
+    assert "ball coverage too low" in calls[0]["content"]
+
+
+def test_notify_webhook_never_raises_on_post_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://example.invalid/hook")
+    def boom(*a, **kw): raise ConnectionError("no network")
+    monkeypatch.setattr("requests.post", boom)
+    pipeline.notify_webhook(tmp_path, ok=True)  # must not raise
+
+
 if __name__ == "__main__":
     print("run via pytest (uses monkeypatch/tmp_path fixtures)")

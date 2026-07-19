@@ -273,6 +273,37 @@ def test_subject_marker_doubles_returns_partner_and_two_opponents():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_calibrate_writes_last_calibration_corners_only(monkeypatch):
+    import pipeline
+    monkeypatch.setattr(pipeline, "enqueue_analyze", lambda sdir: None)
+    d = _mk("testcal_last")
+    (d / "status.json").write_text(json.dumps({"stage": "ingest", "state": "done"}))
+    try:
+        r = client.post("/api/session/testcal_last/calibrate", json={
+            "corners_px": [[0, 0], [1, 0], [1, 1], [0, 1]],
+            "kitchen_px": [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]],
+            "self_px": [0.5, 0.5],
+        })
+        assert r.status_code == 200
+        last = client.get("/api/last-calibration").json()
+        assert last["available"] is True
+        assert last["corners_px"] == [[0, 0], [1, 0], [1, 1], [0, 1]]
+        assert last["kitchen_px"] == [[0.2, 0.2], [0.8, 0.2], [0.8, 0.8], [0.2, 0.8]]
+        assert "self_px" not in last  # per-person click never persisted
+    finally:
+        import shutil
+        shutil.rmtree(d, ignore_errors=True)
+        server.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
+
+
+def test_last_calibration_unavailable_when_never_set():
+    import server
+    server.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
+    r = client.get("/api/last-calibration")
+    assert r.status_code == 200
+    assert r.json() == {"available": False}
+
+
 if __name__ == "__main__":
     for fn in [test_bulk_delete, test_delete_rejects_traversal_and_missing,
                test_delete_empty_ids_rejected, test_soft_delete_then_restore,
@@ -284,6 +315,8 @@ if __name__ == "__main__":
                test_subject_marker_doubles_returns_partner_and_two_opponents,
                test_upload_rejects_bad_match_type, test_calibrate_doubles_requires_partner_px,
                test_meta_patch_context_accepts_valid_and_rejects_invalid,
-               test_sessions_filter_by_context]:
+               test_sessions_filter_by_context,
+               test_calibrate_writes_last_calibration_corners_only,
+               test_last_calibration_unavailable_when_never_set]:
         fn()
         print(f"ok {fn.__name__}")

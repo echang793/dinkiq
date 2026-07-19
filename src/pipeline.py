@@ -14,6 +14,7 @@ resumable:
 """
 
 import json
+import os
 import queue
 import subprocess
 import threading
@@ -214,6 +215,27 @@ def _friendly_error(raw_error: str) -> str:
     return raw_error
 
 
+def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
+    """Post to DINKIQ_WEBHOOK_URL (Discord-compatible) when analysis finishes.
+    No-op if unset. Never raises — a notification failure must never break
+    the analysis pipeline."""
+    url = os.environ.get("DINKIQ_WEBHOOK_URL", "").strip()
+    if not url:
+        return
+    meta_f = sdir / "meta.json"
+    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    label = meta.get("label") or meta.get("filename") or sdir.name
+    if ok:
+        content = f"✅ DinkIQ: **{label}** finished analyzing."
+    else:
+        content = f"⚠️ DinkIQ: **{label}** failed to analyze — {error or 'unknown error'}"
+    try:
+        import requests
+        requests.post(url, json={"content": content[:2000]}, timeout=10)
+    except Exception as e:
+        print(f"  [webhook] notify failed (non-fatal): {e}")
+
+
 def ingest(sdir: Path, raw: Path) -> None:
     """Normalize video, extract audio (if present) + first frame.
 
@@ -331,6 +353,14 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
 
     report = shot_report(hit_times, subject_hits, ball, ball_stats, pos,
                          rallies, corners_px, bounces_court, FPS)
+    # pixel-space bounce points (pre-projection) for the results-screen
+    # trajectory overlay — capped so the JSON payload stays small
+    BOUNCE_OVERLAY_CAP = 150
+    if len(bounces):
+        report["bounces_px"] = (bounces[["frame", "x", "y", "t"]]
+                                .head(BOUNCE_OVERLAY_CAP).round(1).to_dict("records"))
+    else:
+        report["bounces_px"] = []
     (sdir / "shots.json").write_text(json.dumps(report))
     return bounces_court
 
@@ -477,6 +507,8 @@ def analyze(sdir: Path) -> None:
         rating["drill"] = drill_for_weakest(rating)
         (sdir / "dupr.json").write_text(json.dumps(rating))
         set_status(sdir, "done", "done")
+        notify_webhook(sdir, ok=True)
     except Exception as e:
         traceback.print_exc()
         set_status(sdir, get_status(sdir).get("stage", "analyze"), "error", str(e))
+        notify_webhook(sdir, ok=False, error=str(e))
