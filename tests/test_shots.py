@@ -8,7 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from shots import (ball_speed_at, classify_shot, serve_metrics, shot_report)
+from shots import (ball_speed_at, classify_shot, serve_metrics, serve_side,
+                   shot_report, subject_pos_at)
 
 FPS = 30.0
 CORNERS = [[300.0, 150.0], [1000.0, 150.0], [1250.0, 700.0], [50.0, 700.0]]
@@ -49,8 +50,46 @@ def test_serve_depth():
     assert m["deep_serve_pct"] == 100.0
 
 
+def test_serve_placement_recorded():
+    rallies = [{"start": 1.0, "end": 3.0, "hits": 3, "duration": 2.0}]
+    hits = np.array([1.0, 2.0, 3.0])
+    mine = np.array([True, False, True])
+    bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [1.4]})  # court width 20 -> middle third
+    m = serve_metrics(rallies, mine, hits, bounces)
+    assert m["serves"] == [{"t": 1.0, "depth_ft": 4.0, "x": 10.0, "y": 40.0, "side": "middle"}]
+    assert m["serve_side_counts"] == {"middle": 1}
+
+
+def test_serve_side_thirds():
+    assert serve_side(1.0) == "left"     # < 6.67
+    assert serve_side(10.0) == "middle"  # 6.67-13.33
+    assert serve_side(19.0) == "right"   # > 13.33
+
+
+def test_subject_pos_at():
+    pos = pd.DataFrame({"t": [0.8, 1.0, 1.2], "x": [5.0, 6.0, 7.0], "y": [10.0, 12.0, 14.0]})
+    p = subject_pos_at(pos, 1.0)
+    assert p == (6.0, 12.0)
+    assert subject_pos_at(pos, 100.0) is None  # nothing within window
+
+
+def test_shot_report_includes_position_when_available():
+    rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
+    hits = np.array([1.0])
+    mine = np.array([True])
+    frames = np.arange(60)
+    ball = pd.DataFrame({"frame": frames, "x": frames * 10.0, "y": 300.0, "seg": 0})
+    pos = pd.DataFrame({"t": [0.9, 1.0, 1.1], "x": [8.0, 9.0, 10.0], "y": [15.0, 16.0, 17.0]})
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS)
+    assert rep["available"] is True
+    assert len(rep["shots"]) == 1
+    assert rep["shots"][0]["x"] == 9.0 and rep["shots"][0]["y"] == 16.0
+
+
 if __name__ == "__main__":
     for fn in [test_classify_rules, test_ball_speed_at, test_low_coverage_degrades,
-               test_serve_depth]:
+               test_serve_depth, test_serve_placement_recorded, test_serve_side_thirds,
+               test_subject_pos_at, test_shot_report_includes_position_when_available]:
         fn()
         print(f"ok {fn.__name__}")

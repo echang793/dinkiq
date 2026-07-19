@@ -9,8 +9,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from events import (attribute_hits, detect_hits, detect_swings, rally_metrics,
-                    segment_rallies, wrist_speed)
+from events import (attribute_hits, corroborate_hits, detect_hits, detect_swings,
+                    rally_metrics, segment_rallies, wrist_speed)
 
 SR = 22050
 # two rallies: hits at 1,2,3s then gap, hits at 10,11s
@@ -92,8 +92,35 @@ def test_rally_metrics_empty():
     assert m["rally_count"] == 0
 
 
+def test_corroborate_hits_drops_unswung_audio():
+    # 1.0/2.0 are warmup noise (paddle taps, footsteps) with no wrist swing;
+    # 10.0/11.0 are real rally hits backed by subject/opponent swings
+    hits = np.array([1.0, 2.0, 10.0, 11.0])
+    swings = {"subject": np.array([10.02]), "opponent1": np.array([11.03])}
+    kept = corroborate_hits(hits, swings)
+    assert sorted(kept.tolist()) == [10.0, 11.0], kept
+
+
+def test_corroborate_hits_skips_filter_when_no_swings_tracked():
+    # tracking degraded entirely (no swings at all) -> don't zero out every hit
+    hits = np.array([1.0, 2.0, 3.0])
+    kept = corroborate_hits(hits, {"subject": np.array([]), "opponent1": np.array([])})
+    assert list(kept) == list(hits)
+
+
+def test_corroborate_hits_doubles_any_of_four_players_corroborates():
+    hits = np.array([1.0, 2.0, 3.0, 4.0, 99.0])
+    swings = {"subject": np.array([1.02]), "partner": np.array([2.03]),
+             "opponent1": np.array([3.01]), "opponent2": np.array([4.04])}
+    kept = corroborate_hits(hits, swings)
+    assert sorted(kept.tolist()) == [1.0, 2.0, 3.0, 4.0], kept
+
+
 if __name__ == "__main__":
     for fn in [test_hits_survive_noise_speech_music, test_detect_hits_and_rallies,
-               test_swing_detection_and_attribution, test_rally_metrics_empty]:
+               test_swing_detection_and_attribution, test_rally_metrics_empty,
+               test_corroborate_hits_drops_unswung_audio,
+               test_corroborate_hits_skips_filter_when_no_swings_tracked,
+               test_corroborate_hits_doubles_any_of_four_players_corroborates]:
         fn()
         print(f"ok {fn.__name__}")

@@ -24,12 +24,13 @@ import numpy as np
 import pandas as pd
 
 from court import NET_Y, CourtCalibration
-from events import (attribute_hits, detect_hits, detect_swings, rally_metrics,
-                    segment_rallies, wrist_speed)
+from events import (corroborate_hits, detect_hits, detect_swings,
+                    rally_metrics, segment_rallies, wrist_speed)
 from metrics import compute_metrics
-from points import attribute_hitters, point_summary, rally_outcomes
-from tracking import (pick_opponent, pick_subject, run_tracking, stitch_chain_ids,
-                      stitch_subject, subject_court_positions)
+from points import MY_TEAM, attribute_hitters, point_summary, rally_outcomes
+from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject,
+                      run_tracking, stitch_chain_ids, stitch_subject,
+                      subject_court_positions)
 
 ROOT = Path(__file__).resolve().parent.parent
 SESSIONS = ROOT / "data" / "sessions"
@@ -94,16 +95,48 @@ DERIVED = ["positions.parquet", "metrics.json", "events.json", "shots.json",
 def clear_derived(sdir: Path) -> None:
     for name in DERIVED:
         (sdir / name).unlink(missing_ok=True)
+    (sdir / "highlights.mp4").unlink(missing_ok=True)  # stale once rally clips regenerate
     clips = sdir / "clips"
     if clips.exists():
         for f in clips.iterdir():
             f.unlink()
 
 
+HIGHLIGHT_MAX_CLIPS = 5
+
+
+def build_highlights(sdir: Path) -> Path | None:
+    """Concat the top HIGHLIGHT_MAX_CLIPS rally clips (longest rallies first,
+    by hit count) into one highlight reel. Returns the output path, or None
+    if there are no rally clips to work with. Clips already share codec/params
+    (all cut with `-c copy` from the same source video), so a concat-demuxer
+    stream copy is safe and avoids a lossy re-encode."""
+    ev_f = sdir / "events.json"
+    if not ev_f.exists():
+        return None
+    rallies = json.loads(ev_f.read_text()).get("rallies", [])
+    ranked = sorted(range(len(rallies)), key=lambda i: rallies[i]["hits"], reverse=True)
+    clips = [sdir / "clips" / f"rally_{i:02d}.mp4" for i in ranked[:HIGHLIGHT_MAX_CLIPS]]
+    clips = [c for c in clips if c.exists()]
+    if not clips:
+        return None
+    out = sdir / "highlights.mp4"
+    listfile = sdir / "highlights_list.txt"
+    listfile.write_text("\n".join(f"file '{c.resolve()}'" for c in clips))
+    try:
+        _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile),
+              "-c", "copy", str(out)])
+    finally:
+        listfile.unlink(missing_ok=True)
+    return out
+
+
 # ---- single-worker analysis queue: one YOLO/MPS job at a time ----
 _jobs: queue.Queue = queue.Queue()
 _worker_started = False
 _worker_lock = threading.Lock()
+_queue_order: list[Path] = []  # FIFO of pending/running session dirs, for position lookup
+_queue_lock = threading.Lock()
 
 
 def _worker() -> None:
@@ -114,6 +147,9 @@ def _worker() -> None:
         except Exception:
             traceback.print_exc()
         finally:
+            with _queue_lock:
+                if sdir in _queue_order:
+                    _queue_order.remove(sdir)
             _jobs.task_done()
 
 
@@ -124,7 +160,18 @@ def enqueue_analyze(sdir: Path) -> None:
             threading.Thread(target=_worker, daemon=True).start()
             _worker_started = True
     set_status(sdir, "queued", "queued")
+    with _queue_lock:
+        _queue_order.append(sdir)
     _jobs.put(sdir)
+
+
+def queue_position(sdir: Path) -> int | None:
+    """0 = currently running/next up, N = N jobs ahead, None = not queued."""
+    with _queue_lock:
+        try:
+            return _queue_order.index(sdir)
+        except ValueError:
+            return None
 
 
 def _has_audio(raw: Path) -> bool:
@@ -152,6 +199,21 @@ def probe_video(path: Path) -> dict:
             "frames": frames, "duration": round(duration, 2)}
 
 
+FRIENDLY_FFMPEG_ERRORS = (
+    ("no video stream", "no readable video track — is this actually a video file?"),
+    ("invalid data found", "video file is unreadable or corrupted — try re-exporting and re-uploading"),
+    ("moov atom not found", "video file looks truncated (incomplete download/export) — try re-uploading"),
+)
+
+
+def _friendly_error(raw_error: str) -> str:
+    low = raw_error.lower()
+    for needle, friendly in FRIENDLY_FFMPEG_ERRORS:
+        if needle in low:
+            return friendly
+    return raw_error
+
+
 def ingest(sdir: Path, raw: Path) -> None:
     """Normalize video, extract audio (if present) + first frame.
 
@@ -162,6 +224,10 @@ def ingest(sdir: Path, raw: Path) -> None:
         set_status(sdir, "ingest", "running")
         video = sdir / "video.mp4"
         src = probe_video(raw)
+        if not src["codec"] or src["width"] == 0 or src["height"] == 0 or src["duration"] <= 0:
+            set_status(sdir, "ingest", "error",
+                      "video file is unreadable or corrupted — try re-exporting and re-uploading")
+            return
         if (src["codec"] == "h264" and src["height"] <= 720
                 and 29.0 <= src["fps"] <= 31.0):
             _run(["ffmpeg", "-y", "-i", str(raw), "-an", "-c:v", "copy", str(video)])
@@ -178,39 +244,55 @@ def ingest(sdir: Path, raw: Path) -> None:
         set_status(sdir, "ingest", "done")
     except Exception as e:
         traceback.print_exc()
-        set_status(sdir, "ingest", "error", str(e))
+        set_status(sdir, "ingest", "error", _friendly_error(str(e)))
 
 
-def events(sdir: Path, tracks: pd.DataFrame, subject: int, opponent: int | None,
-           hit_times: np.ndarray | None = None):
+def _player_swings(tracks: pd.DataFrame, track_id: int | None) -> np.ndarray:
+    if track_id is None or not len(tracks):
+        return np.array([])
+    chain = stitch_subject(tracks, track_id)
+    return detect_swings(wrist_speed(chain, FPS)) if len(chain) else np.array([])
+
+
+def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
+          opponents: list[int], hit_times: np.ndarray | None = None):
     """M2: paddle hits from audio, rallies, swings, per-rally clips.
 
     Degrades gracefully: no/quiet audio -> events.json records zero rallies.
     hit_times may be precomputed (analyze runs audio concurrently with tracking).
-    Returns (hit_times, subject_hits, rallies, hitters) — hitters is a per-hit
-    'subject'/'opponent'/'unknown' label for the points stage.
+    `partner` is None in singles; `opponents` has 1 id in singles, up to 2 in
+    doubles. Returns (hit_times, team_hits, rallies, hitters) — hitters is a
+    per-hit 'subject'/'partner'/'opponent1'/'opponent2'/'unknown' label for
+    the points stage; team_hits is True for any hit attributed to subject OR
+    partner (used for "my team's shots" downstream, identical to
+    subject-only in singles since partner is always None there).
     """
     audio = sdir / "audio.wav"
     duration = float(tracks["frame"].max() + 1) / FPS if len(tracks) else 0.0
     if hit_times is None:
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
+
+    player_swings = {"subject": _player_swings(tracks, subject)}
+    if partner is not None:
+        player_swings["partner"] = _player_swings(tracks, partner)
+    for i, opp_id in enumerate(opponents[:2]):
+        player_swings[f"opponent{i + 1}"] = _player_swings(tracks, opp_id)
+
+    # drop audio "hits" with no matching wrist swing (warmup/pre-play noise)
+    # before segmenting into rallies, so getting-ready footage isn't scored
+    hit_times = corroborate_hits(hit_times, player_swings)
     rallies = segment_rallies(hit_times)
-
-    sub = stitch_subject(tracks, subject) if len(tracks) else tracks
-    subject_swings = detect_swings(wrist_speed(sub, FPS)) if len(sub) else np.array([])
-    subject_hits = attribute_hits(hit_times, subject_swings)
-
-    if opponent is not None and len(tracks):
-        opp = stitch_subject(tracks, opponent)
-        opponent_swings = detect_swings(wrist_speed(opp, FPS)) if len(opp) else np.array([])
-    else:
-        opponent_swings = np.array([])
-    hitters = attribute_hitters(hit_times, subject_swings, opponent_swings)
+    hitters = attribute_hitters(hit_times, player_swings)
+    subject_hits = np.array([h == "subject" for h in hitters])
+    team_hits = np.array([h in MY_TEAM for h in hitters])
 
     ev = rally_metrics(rallies, hit_times, subject_hits, duration)
-    ev["swing_count"] = int(len(subject_swings))
-    ev["opponent_track_id"] = opponent
-    ev["opponent_swing_count"] = int(len(opponent_swings))
+    ev["swing_count"] = int(len(player_swings["subject"]))
+    ev["partner_track_id"] = partner
+    ev["partner_swing_count"] = int(len(player_swings.get("partner", [])))
+    ev["opponent_track_ids"] = opponents
+    ev["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
+    ev["opponent_swing_count"] = int(len(player_swings.get("opponent1", [])))
     (sdir / "events.json").write_text(json.dumps(ev))
 
     clips = sdir / "clips"
@@ -224,7 +306,7 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, opponent: int | None,
         # stream copy: keyframe-aligned (may start slightly early — fine, it's padding)
         _run(["ffmpeg", "-y", "-ss", f"{start:.2f}", "-i", str(sdir / "video.mp4"),
               "-t", f"{dur:.2f}", "-c", "copy", "-an", str(out)])
-    return hit_times, subject_hits, rallies, hitters
+    return hit_times, team_hits, rallies, hitters
 
 
 def shots_stage(sdir: Path, calib: CourtCalibration,
@@ -258,7 +340,7 @@ def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
     """Rally winners + serve/return win rates from hitter attribution."""
     outcomes = rally_outcomes(rallies, hit_times, hitters,
                               bounces_court if ball_available else None)
-    summary = point_summary(outcomes, ball_available)
+    summary = point_summary(outcomes, ball_available, hitters=hitters)
     (sdir / "points.json").write_text(json.dumps({"outcomes": outcomes, **summary}))
 
 
@@ -330,29 +412,51 @@ def analyze(sdir: Path) -> None:
                 {"cut_frames": cutdet.cut_frames}))
 
         set_status(sdir, "metrics", "running")
+        meta = json.loads((sdir / "meta.json").read_text()) if (sdir / "meta.json").exists() else {}
+        match_type = meta.get("match_type", "singles")
+        doubles = match_type == "doubles"
+
         subject = pick_subject(tracks, tuple(calib_data["self_px"]))
         pos = subject_court_positions(tracks, subject, calib, FPS)
         pos.to_parquet(sdir / "positions.parquet", index=False)
 
         subject_ids = stitch_chain_ids(tracks, subject) if len(tracks) else {subject}
+        partner = None
+        partner_ids: set[int] = set()
+        if doubles and calib_data.get("partner_px") and len(tracks):
+            partner = pick_subject(tracks, tuple(calib_data["partner_px"]))
+            partner_ids = stitch_chain_ids(tracks, partner)
+
         subject_median_y = float(np.median(pos["y"])) if len(pos) else NET_Y
-        opponent = pick_opponent(tracks, calib, subject_ids, subject_median_y) \
-            if len(tracks) else None
+        exclude_ids = subject_ids | partner_ids
+        opponents = pick_opponents(tracks, calib, exclude_ids, subject_median_y,
+                                   n=2 if doubles else 1) if len(tracks) else []
+
+        # 4 known players is expected in doubles, not an ambiguity signal —
+        # only dock confidence for an unexpected extra person in singles
+        secondary_court_tracks = 0
+        if not doubles and len(tracks):
+            all_ids = exclude_ids | set(opponents)
+            secondary_court_tracks = count_secondary_court_tracks(tracks, calib, all_ids)
 
         cuts_f = sdir / "cuts.json"
         n_cuts = len(json.loads(cuts_f.read_text())["cut_frames"]) if cuts_f.exists() else 0
-        m = compute_metrics(pos, FPS, camera_cuts=n_cuts)
+        m = compute_metrics(pos, FPS, camera_cuts=n_cuts,
+                            secondary_court_tracks=secondary_court_tracks)
+        m["match_type"] = match_type
         m["subject_track_id"] = subject
-        m["opponent_track_id"] = opponent
+        m["partner_track_id"] = partner
+        m["opponent_track_ids"] = opponents
+        m["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
         (sdir / "metrics.json").write_text(json.dumps(m))
 
         set_status(sdir, "events", "running")
         audio_thread.join(timeout=120)
-        hit_times, subject_hits, rallies, hitters = events(
-            sdir, tracks, subject, opponent, hit_times=audio_result.get("hits"))
+        hit_times, team_hits, rallies, hitters = events(
+            sdir, tracks, subject, partner, opponents, hit_times=audio_result.get("hits"))
 
         set_status(sdir, "shots", "running")
-        bounces_court = shots_stage(sdir, calib, pos, hit_times, subject_hits, rallies,
+        bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
                                     calib_data["corners_px"], ball, ball_stats)
 
         set_status(sdir, "points", "running")
@@ -362,7 +466,7 @@ def analyze(sdir: Path) -> None:
 
         set_status(sdir, "rating", "running")
         from dupr import estimate
-        from feedback import coach_tips
+        from feedback import coach_tips, drill_for_weakest
         rating = estimate(
             json.loads((sdir / "metrics.json").read_text()),
             json.loads((sdir / "events.json").read_text()),
@@ -370,6 +474,7 @@ def analyze(sdir: Path) -> None:
             calibration=calib_data,
         )
         rating["tips"] = coach_tips(rating)
+        rating["drill"] = drill_for_weakest(rating)
         (sdir / "dupr.json").write_text(json.dumps(rating))
         set_status(sdir, "done", "done")
     except Exception as e:

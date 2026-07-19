@@ -87,8 +87,36 @@ def test_compare_rejects_missing_session():
         shutil.rmtree(a, ignore_errors=True)
 
 
+def test_compare_multi_returns_all_summaries():
+    a = _mk("cmp_multi_a", "A", kitchen=20.0, dupr_band=3.0)
+    b = _mk("cmp_multi_b", "B", kitchen=30.0, dupr_band=3.25)
+    c = _mk("cmp_multi_c", "C", kitchen=45.0, dupr_band=3.5)
+    try:
+        r = client.get("/api/compare/multi", params={"ids": "cmp_multi_a,cmp_multi_b,cmp_multi_c"})
+        assert r.status_code == 200
+        sessions = r.json()["sessions"]
+        assert [s["session_id"] for s in sessions] == ["cmp_multi_a", "cmp_multi_b", "cmp_multi_c"]
+        assert [s["kitchen_pct"] for s in sessions] == [20.0, 30.0, 45.0]
+    finally:
+        import shutil
+        shutil.rmtree(a, ignore_errors=True)
+        shutil.rmtree(b, ignore_errors=True)
+        shutil.rmtree(c, ignore_errors=True)
+
+
+def test_compare_multi_requires_at_least_two():
+    a = _mk("cmp_multi_only", "A", kitchen=20.0, dupr_band=3.0)
+    try:
+        r = client.get("/api/compare/multi", params={"ids": "cmp_multi_only"})
+        assert r.status_code == 400
+    finally:
+        import shutil
+        shutil.rmtree(a, ignore_errors=True)
+
+
 if __name__ == "__main__":
     for fn in [test_compare_computes_deltas, test_compare_missing_dupr_gives_null_delta,
-               test_compare_rejects_unready_session, test_compare_rejects_missing_session]:
+               test_compare_rejects_unready_session, test_compare_rejects_missing_session,
+               test_compare_multi_returns_all_summaries, test_compare_multi_requires_at_least_two]:
         fn()
         print(f"ok {fn.__name__}")

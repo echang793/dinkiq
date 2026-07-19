@@ -126,6 +126,12 @@ def estimate(metrics: dict, events: dict, shots: dict,
         confidence -= 0.05
     if metrics.get("camera_cuts", 0) > 3:
         confidence -= 0.15  # cuts fragment tracking + skew per-angle homography
+    if metrics.get("secondary_court_tracks", 0) > 0:
+        confidence -= 0.15  # likely doubles/crowd — opponent attribution unreliable
+    if metrics.get("match_type") == "doubles":
+        caveats.append("DUPR rubric anchors aren't tuned for doubles positioning "
+                       "yet — treat this estimate as rougher than usual.")
+        confidence -= 0.10
     if any("behind the baseline" in w for w in metrics.get("warnings", [])):
         confidence -= 0.25  # geometry broken: positioning dims untrustworthy
     confidence = round(float(np.clip(confidence, 0.05, 0.95)), 2)

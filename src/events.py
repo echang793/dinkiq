@@ -117,6 +117,28 @@ def attribute_hits(hit_times: np.ndarray, swing_times: np.ndarray) -> np.ndarray
                      for h in hit_times])
 
 
+def corroborate_hits(hit_times: np.ndarray,
+                     player_swings: dict[str, np.ndarray]) -> np.ndarray:
+    """Drop audio "hits" with no matching wrist swing from any tracked player.
+
+    Pre-play noise (footsteps, paddle taps while setting up, talking) can
+    pass the audio transient gate but has no swing behind it — filtering on
+    swing corroboration keeps warmup/dead air from being scored as a rally.
+    Generalizes from 2 players (singles) to up to 4 (doubles) — a hit counts
+    if ANY tracked player has a matching swing. If nobody has any tracked
+    swings at all (e.g. tracking degraded), skip filtering rather than
+    silently zeroing out every rally.
+    """
+    if len(hit_times) == 0:
+        return hit_times
+    if all(len(s) == 0 for s in player_swings.values()):
+        return hit_times
+    ok = np.zeros(len(hit_times), dtype=bool)
+    for swings in player_swings.values():
+        ok |= attribute_hits(hit_times, swings)
+    return hit_times[ok]
+
+
 def rally_metrics(rallies: list[dict], hit_times: np.ndarray,
                   subject_hits: np.ndarray, video_duration: float) -> dict:
     if not rallies:

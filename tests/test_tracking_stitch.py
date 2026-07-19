@@ -9,7 +9,8 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from court import NET_Y, CourtCalibration
-from tracking import feet_px, pick_opponent, stitch_chain_ids, stitch_subject
+from tracking import (count_secondary_court_tracks, feet_px, pick_opponent,
+                      pick_opponents, stitch_chain_ids, stitch_subject)
 
 
 def _frag(tid: int, f0: int, n: int, x0: float, y0: float, dx: float = 2.0) -> pd.DataFrame:
@@ -94,10 +95,48 @@ def test_pick_opponent_none_when_nobody_else_visible():
     assert pick_opponent(subject, calib, subject_ids, subject_y) is None
 
 
+def test_count_secondary_court_tracks_flags_doubles_partner():
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)     # near-bottom pixels: subject's baseline
+    partner = _frag(2, 0, 200, 300, 600)     # same side as subject (doubles partner)
+    opponent = _frag(3, 0, 200, 700, 100)    # far-top pixels: other side of the net
+    df = pd.concat([subject, partner, opponent], ignore_index=True)
+    subject_ids = stitch_chain_ids(df, 1)
+    count = count_secondary_court_tracks(df, calib, subject_ids | {3})
+    assert count == 1  # the doubles partner, excluding subject + chosen opponent
+
+
+def test_count_secondary_court_tracks_zero_for_singles():
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)
+    opponent = _frag(3, 0, 200, 700, 100)
+    spectator = _frag(4, 0, 10, 700, 100)    # too few frames to count
+    df = pd.concat([subject, opponent, spectator], ignore_index=True)
+    subject_ids = stitch_chain_ids(df, 1)
+    assert count_secondary_court_tracks(df, calib, subject_ids | {3}) == 0
+
+
+def test_pick_opponents_n2_returns_both_far_side_players():
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)     # near-bottom: subject's baseline
+    partner = _frag(2, 0, 200, 300, 600)     # same side as subject
+    opp1 = _frag(3, 0, 200, 700, 100)        # far side, strong signal
+    opp2 = _frag(5, 0, 150, 300, 100)        # far side, weaker signal (fewer frames)
+    df = pd.concat([subject, partner, opp1, opp2], ignore_index=True)
+    subject_ids = stitch_chain_ids(df, 1)
+    partner_ids = stitch_chain_ids(df, 2)
+    subject_y = float(np.median(calib.to_court(feet_px(subject))[:, 1]))
+    result = pick_opponents(df, calib, subject_ids | partner_ids, subject_y, n=2)
+    assert set(result) == {3, 5}, result
+
+
 if __name__ == "__main__":
     for fn in [test_stitch_follows_across_id_breaks, test_stitch_respects_gap_and_distance,
                test_kitchen_anchored_homography_beats_bad_corners,
                test_pick_opponent_finds_far_side_player,
-               test_pick_opponent_none_when_nobody_else_visible]:
+               test_pick_opponent_none_when_nobody_else_visible,
+               test_count_secondary_court_tracks_flags_doubles_partner,
+               test_count_secondary_court_tracks_zero_for_singles,
+               test_pick_opponents_n2_returns_both_far_side_players]:
         fn()
         print(f"ok {fn.__name__}")

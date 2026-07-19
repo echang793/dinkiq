@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from dupr import RUBRIC, estimate, interp_band
-from feedback import coach_tips
+from feedback import coach_tips, drill_for_weakest
 
 GOOD_METRICS = {"zone_pct": {"kitchen": 55.0, "transition": 12.0, "baseline": 33.0},
                 "active_seconds": 900.0, "warnings": []}
@@ -54,11 +54,14 @@ def test_confidence_penalties():
                       GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
     cutty = estimate({**GOOD_METRICS, "camera_cuts": 12},
                      GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
+    doubles = estimate({**GOOD_METRICS, "secondary_court_tracks": 1},
+                       GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
     assert no_kitchen["confidence"] < full["confidence"]
     assert offframe["confidence"] < full["confidence"]
     assert short["confidence"] < full["confidence"]
     assert warned["confidence"] < full["confidence"]
     assert cutty["confidence"] < full["confidence"]
+    assert doubles["confidence"] < full["confidence"]
     assert any("off-frame" in c for c in offframe["caveats"])
     assert any("Kitchen corners were not marked" in c for c in no_kitchen["caveats"])
 
@@ -81,9 +84,29 @@ def test_tips_target_weakest():
     assert stips and all("only" not in t.lower()[:30] for t in stips[:1])
 
 
+def test_drill_targets_weakest_dimension():
+    weak = estimate(WEAK_METRICS, {"rally_count": 8, "avg_rally_hits": 3.5},
+                    {"available": False}, CAL_FULL)
+    drill = drill_for_weakest(weak)
+    assert drill is not None
+    assert drill["dimension"] == "nvz_discipline"  # weakest in WEAK_METRICS
+    assert drill["name"] == "Return-and-Run"
+    assert "reps" in drill and "description" in drill
+
+
+def test_drill_none_when_nothing_weak():
+    strong = estimate(GOOD_METRICS, GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
+    assert drill_for_weakest(strong) is None
+
+
+def test_drill_none_when_unavailable():
+    assert drill_for_weakest({"available": False}) is None
+
+
 if __name__ == "__main__":
     for fn in [test_interp_band_monotone_and_clamped, test_strong_player_beats_weak_player,
                test_confidence_penalties, test_unmeasurable_dims_omitted,
-               test_tips_target_weakest]:
+               test_tips_target_weakest, test_drill_targets_weakest_dimension,
+               test_drill_none_when_nothing_weak, test_drill_none_when_unavailable]:
         fn()
         print(f"ok {fn.__name__}")

@@ -37,6 +37,60 @@ TIPS: dict[str, dict] = {
 
 WEAK_BAND = 3.5   # dimensions below this band get improvement tips
 
+DRILLS: dict[str, dict] = {
+    "nvz_discipline": {
+        "name": "Return-and-Run",
+        "reps": "10 reps",
+        "description": "After every return of serve, sprint all the way to the NVZ "
+                       "line before the third shot arrives — no stopping short.",
+    },
+    "positioning": {
+        "name": "Split-Step Transition",
+        "reps": "15 reps",
+        "description": "Start at the baseline, split-step the moment the ball is "
+                       "struck, advance one controlled step at a time — never park "
+                       "in no-man's land.",
+    },
+    "rally_sustain": {
+        "name": "10-Ball Rally Target",
+        "reps": "5 rallies",
+        "description": "Dink cross-court at 80% pace with high net clearance, aiming "
+                       "for 10+ consecutive shots before either side goes for a "
+                       "putaway.",
+    },
+    "shot_variety": {
+        "name": "Drive-Drop-Dink Ladder",
+        "reps": "3 rounds of 5",
+        "description": "Off a fed ball, cycle drive, third-shot drop, then dink in "
+                       "sequence — build all three into the same rally instead of "
+                       "defaulting to one.",
+    },
+    "serve_depth": {
+        "name": "Deep-Serve Targets",
+        "reps": "20 serves",
+        "description": "Place a target 2 ft inside the baseline and serve until you "
+                       "land 15 of 20 inside it, with margin over the net.",
+    },
+}
+
+
+def drill_for_weakest(dupr: dict) -> dict | None:
+    """The single most actionable drill, targeting whichever rubric dimension
+    scored lowest — None if nothing is weak enough to warrant one."""
+    if not dupr.get("available"):
+        return None
+    dims = dupr.get("dimensions") or {}
+    if not dims:
+        return None
+    name, d = min(dims.items(), key=lambda kv: kv[1]["band"])
+    if d["band"] >= WEAK_BAND:
+        return None
+    drill = dict(DRILLS[name])
+    drill["dimension"] = name
+    drill["target_label"] = d["label"]
+    drill["band"] = d["band"]
+    return drill
+
 
 def coach_tips(dupr: dict, max_tips: int = 3) -> list[str]:
     """Improvement tips for the weakest dimensions + one strength callout."""

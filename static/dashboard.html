@@ -133,6 +133,10 @@
   button.danger{background:var(--redwash);color:var(--red);box-shadow:inset 0 0 0 1px var(--redline)}
   button.danger:hover:not(:disabled){background:rgba(255,92,92,.2);box-shadow:inset 0 0 0 1px var(--red)}
   button.sm{padding:9px 13px;font-size:11px;border-radius:5px}
+  .matchseg{display:inline-flex;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--line2);margin-bottom:12px}
+  .matchseg button{border-radius:0;background:var(--panel);color:var(--muted);box-shadow:none;padding:9px 18px;font-size:11.5px}
+  .matchseg button:hover:not(:disabled){transform:none;box-shadow:none;background:var(--panel2);color:var(--ink)}
+  .matchseg button.on{background:var(--accent);color:#111}
   button.skinbtn{width:24px;height:24px;padding:0;border-radius:99px;border:2px solid var(--line2);flex:none}
   button.skinbtn:hover:not(:disabled){transform:scale(1.18);border-color:var(--muted);box-shadow:none}
   button.skinbtn.on{border-color:#fff;box-shadow:0 0 0 3px var(--accentwash)}
@@ -272,7 +276,8 @@
 
   .figcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 18px 15px;box-shadow:var(--sh);display:flex;flex-direction:column}
   .figcard h2{margin-bottom:14px}
-  .figwrap{flex:1;display:grid;place-items:center;opacity:0;transform:scale(.96);animation:figin .8s var(--ease) .5s forwards}
+  .figwrap{flex:1;display:grid;place-items:center;opacity:0;transform:scale(.96);animation:figin .8s var(--ease) .5s forwards;min-width:0}
+  .figwrap canvas{max-width:100%;height:auto;display:block}
   @keyframes figin{to{opacity:1;transform:none}}
   #heatCanvas{width:100%;max-width:300px;display:block}
   .heatnote{text-align:center;color:var(--dim);font-size:11px;margin-top:12px;line-height:1.4}
@@ -449,6 +454,10 @@
   <section class="screen on" id="home">
     <div class="card">
       <h2>New session</h2>
+      <div class="matchseg" role="group" aria-label="Match type">
+        <button type="button" class="on" id="matchSingles" onclick="setMatchType('singles')">Singles</button>
+        <button type="button" id="matchDoubles" onclick="setMatchType('doubles')">Doubles</button>
+      </div>
       <div class="drop" id="drop">
         <div class="ic"><svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></div>
         <div class="big" id="dropTitle">Drop your match film here</div>
@@ -532,6 +541,7 @@
       <span class="back" onclick="goHome()" style="margin:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
       <div style="display:flex;gap:9px">
         <button class="ghost sm" onclick="downloadReport()">Download report (PDF)</button>
+        <button class="ghost sm" onclick="downloadHighlights()">Download highlights</button>
         <button class="ghost sm" onclick="startCalib()">Recalibrate</button>
         <button class="ghost sm" onclick="reanalyze()">Re-analyze</button>
       </div>
@@ -546,28 +556,65 @@
         <div class="figwrap"><canvas id="heatCanvas"></canvas></div>
         <div class="heatnote">where you stood · 2 ft cells · brighter = more time</div>
       </div>
+      <div class="figcard" id="subjMarkerCard" style="display:none">
+        <h2><span class="num">Fig.&nbsp;2</span> Player identification</h2>
+        <div class="figwrap"><canvas id="subjCanvas"></canvas></div>
+        <div class="heatnote" id="subjNote">solid = YOU · dashed = opponent</div>
+      </div>
     </div>
     <div class="card">
       <h2>Session info</h2>
       <div class="metafields">
         <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" style="width:220px"></div>
+        <div class="fld"><label>Opponent</label><input id="mOpponent" placeholder="e.g. Sam" style="width:160px" onchange="loadHeadToHead()"></div>
         <div class="fld"><label>Played on</label><input id="mDate" type="date"></div>
         <div class="fld"><label>Known DUPR</label><input id="mDupr" type="number" step="0.05" min="2" max="8" style="width:120px"></div>
+        <div class="fld"><label>Context</label>
+          <select id="mContext" style="width:140px">
+            <option value="">—</option>
+            <option value="practice">Practice</option>
+            <option value="league">League</option>
+            <option value="tournament">Tournament</option>
+          </select>
+        </div>
         <button class="ghost sm" onclick="saveMeta()">Save</button>
         <span class="saved" id="mSaved">saved ✓</span>
       </div>
+      <div class="fld" style="margin-top:10px"><label>Notes</label><textarea id="mNotes" rows="3" placeholder="what worked, what to fix next time…" style="width:100%;resize:vertical"></textarea></div>
+      <div class="metafields" style="margin-top:10px">
+        <input type="file" id="mReuploadFile" accept="video/mp4,video/quicktime,video/x-m4v" style="display:none" onchange="doReupload()">
+        <button class="ghost sm" onclick="$('mReuploadFile').click()">Replace video…</button>
+        <span class="mut" style="font-size:12px">wrong or corrupt upload? swap the file without losing this session's notes</span>
+      </div>
+      <div id="h2hBox" style="display:none;margin-top:14px"></div>
     </div>
     <div class="card">
       <h2>Movement &amp; positioning</h2>
       <div id="metricWarn"></div>
       <div class="grid" id="stats"></div>
       <div class="bars" id="zones"></div>
+      <div id="curveWrap" style="display:none;margin-top:16px">
+        <div class="heatnote" style="margin-bottom:6px">movement speed over the session — fatigue/momentum curve</div>
+        <div class="figwrap"><canvas id="curveCanvas"></canvas></div>
+      </div>
     </div>
     <div class="card">
       <h2>Shots</h2>
       <div class="grid" id="shotStats"></div>
       <div class="bars" id="shotMix"></div>
       <div id="shotNote"></div>
+      <div class="herowrap" id="shotVizWrap" style="display:none;margin-top:16px">
+        <div class="figcard">
+          <h2 style="font-size:13px">Shot heatmap by type</h2>
+          <div class="figwrap"><canvas id="shotHeatCanvas"></canvas></div>
+          <div class="heatnote" id="shotHeatLegend"></div>
+        </div>
+        <div class="figcard" id="serveVizCard" style="display:none">
+          <h2 style="font-size:13px">Serve placement</h2>
+          <div class="bars" id="serveMapBars" style="margin-top:8px"></div>
+          <div class="heatnote">left / middle / right thirds, receiver's view</div>
+        </div>
+      </div>
     </div>
     <div class="card">
       <h2>Rallies</h2>
@@ -584,6 +631,7 @@
     <div class="card">
       <h2>Coach's notes</h2>
       <div id="tipBox"><div class="empty">No tips for this session.</div></div>
+      <div id="drillBox" style="display:none;margin-top:14px"></div>
     </div>
   </section>
 
@@ -594,13 +642,30 @@
         <p class="psub">Every match you've uploaded. Click any row to open its full breakdown.</p>
       </div>
       <div style="display:flex;gap:9px">
-        <button class="ghost sm" id="cmpBtn" onclick="compareClicked()" disabled>Compare 2</button>
+        <button class="ghost sm" id="cmpBtn" onclick="compareClicked()" disabled>Compare</button>
         <button class="ghost sm" id="delBtn" onclick="deleteClicked()" disabled>Delete selected</button>
+        <button class="ghost sm" onclick="openTrash()">View trash</button>
       </div>
     </div>
     <div class="card">
+      <div class="metafields" style="margin-bottom:14px">
+        <input id="sFilterLabel" placeholder="search label…" style="width:180px" oninput="loadSessionsPage()">
+        <input id="sFilterOpponent" placeholder="search opponent…" style="width:160px" oninput="loadSessionsPage()">
+        <input id="sFilterFrom" type="date" title="played on/after" onchange="loadSessionsPage()">
+        <input id="sFilterTo" type="date" title="played on/before" onchange="loadSessionsPage()">
+        <select id="sFilterContext" onchange="loadSessionsPage()">
+          <option value="">any context</option>
+          <option value="practice">Practice</option>
+          <option value="league">League</option>
+          <option value="tournament">Tournament</option>
+        </select>
+      </div>
       <h2><span id="sessCount">—</span></h2>
       <div id="sessTable"></div>
+    </div>
+    <div class="card" id="trashCard" style="display:none">
+      <h2>Trash <span class="mut" style="font:400 12px Archivo">deleted sessions, kept 7 days</span></h2>
+      <div id="trashTable"></div>
     </div>
   </section>
 
@@ -608,6 +673,18 @@
     <span class="back" onclick="goSessions()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
     <div class="pagehead"><div><h1 class="ptitle">Compare sessions</h1><p class="psub">Side-by-side, with the change from A to B.</p></div></div>
     <div class="card"><div id="cmpBody"><div class="empty">Pick two sessions to compare.</div></div></div>
+    <div class="card" id="clipCmpCard" style="display:none">
+      <h2>Side-by-side clips</h2>
+      <div class="metafields">
+        <div class="fld"><label id="clipCmpLabelA">Session A</label><select id="clipCmpRallyA"></select></div>
+        <div class="fld"><label id="clipCmpLabelB">Session B</label><select id="clipCmpRallyB"></select></div>
+        <button class="ghost sm" onclick="playBothClips()">▶ Play both</button>
+      </div>
+      <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap">
+        <video id="clipCmpVideoA" controls style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
+        <video id="clipCmpVideoB" controls style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
+      </div>
+    </div>
   </section>
 
   <section class="screen" id="trends">
@@ -753,6 +830,12 @@ function goTrends() { clearInterval(pollTimer); show('trends'); loadTrendsPage()
 /* ---------------- upload ---------------- */
 const drop = $('drop'), fileIn = $('file');
 let uploading = false;
+let matchType = 'singles';
+function setMatchType(t) {
+  matchType = t;
+  $('matchSingles').classList.toggle('on', t === 'singles');
+  $('matchDoubles').classList.toggle('on', t === 'doubles');
+}
 drop.onclick = () => { if (!uploading) fileIn.click(); };
 drop.ondragover = e => { e.preventDefault(); if (!uploading) drop.classList.add('on'); };
 drop.ondragleave = () => drop.classList.remove('on');
@@ -789,7 +872,7 @@ function doUpload(f) {
     else fail(j.detail || ('HTTP ' + xhr.status));
   };
   xhr.onerror = () => { enableDemo(); demoUpload(f, done); };
-  const fd = new FormData(); fd.append('file', f);
+  const fd = new FormData(); fd.append('file', f); fd.append('match_type', matchType);
   xhr.send(fd);
 }
 function setUpProgress(frac, loaded, total) {
@@ -866,7 +949,7 @@ function waitFor(pred, then, label, quiet) {
 }
 
 /* ---------------- calibration ---------------- */
-const CAL_STEPS = [
+const CAL_STEPS_BASE = [
   { chip:'C1', cls:'', title:'Far-left court corner', sub:'Baseline meets the left sideline on the FAR side of the net. Cut off by the camera? Click its estimated spot in the hatched border.' },
   { chip:'C2', cls:'', title:'Far-right court corner', sub:'Baseline × right sideline, far side. Off-frame estimates in the border are fine.' },
   { chip:'C3', cls:'', title:'Near-right court corner', sub:'The corner closest to the camera, right side.' },
@@ -877,7 +960,9 @@ const CAL_STEPS = [
   { chip:'K4', cls:'k', title:'Near-left kitchen corner', sub:'Near NVZ line × left sideline.' },
   { chip:'YOU', cls:'me', title:'Click yourself', sub:'Click your body so the coach knows which player to follow.' },
 ];
-const N_CLICKS = 9, PADF = 0.25;
+const CAL_STEP_PARTNER = { chip:'P', cls:'partner', title:'Click your partner', sub:'Click your partner\'s body so we know who\'s on your team.' };
+function calSteps() { return matchType === 'doubles' ? [...CAL_STEPS_BASE, CAL_STEP_PARTNER] : CAL_STEPS_BASE; }
+const PADF = 0.25;
 let calClicks = [], calImg = null, padX = 0, padY = 0;
 
 function startCalib() {
@@ -896,18 +981,18 @@ function startCalib() {
   updateCalUI();
 }
 function updateCalUI() {
-  const n = calClicks.length;
-  $('calSteps').innerHTML = CAL_STEPS.map((s, i) =>
+  const steps = calSteps(), total = steps.length, n = calClicks.length;
+  $('calSteps').innerHTML = steps.map((s, i) =>
     '<span class="step ' + s.cls + (i < n ? ' done' : i === n ? ' act' : '') + '">' + s.chip + '</span>').join('');
   const h = $('calHint');
-  if (n < N_CLICKS) {
-    const s = CAL_STEPS[n];
-    const col = n < 4 ? 'var(--accent)' : n < 8 ? 'var(--amber)' : 'var(--red)';
-    h.innerHTML = '<span class="dot" style="background:' + col + '"></span><div><b>' + (n+1) + ' / 9 — ' + s.title + '</b><span>' + s.sub + '</span></div>';
+  if (n < total) {
+    const s = steps[n];
+    const col = n < 4 ? 'var(--accent)' : n < 8 ? 'var(--amber)' : n === 8 ? 'var(--red)' : '#8b6bf0';
+    h.innerHTML = '<span class="dot" style="background:' + col + '"></span><div><b>' + (n+1) + ' / ' + total + ' — ' + s.title + '</b><span>' + s.sub + '</span></div>';
   } else {
-    h.innerHTML = '<span class="dot" style="background:var(--accent)"></span><div><b>All 9 points set</b><span>Review the overlay, then hit Analyze. You can undo or start over.</span></div>';
+    h.innerHTML = '<span class="dot" style="background:var(--accent)"></span><div><b>All ' + total + ' points set</b><span>Review the overlay, then hit Analyze. You can undo or start over.</span></div>';
   }
-  $('calGo').disabled = n !== N_CLICKS;
+  $('calGo').disabled = n !== total;
 }
 function drawCal() {
   const c = $('calCanvas'), ctx = c.getContext('2d');
@@ -926,13 +1011,14 @@ function drawCal() {
   };
   if (calClicks.length >= 4) quad([0,1,2,3], 'rgba(91,130,232,.9)');
   if (calClicks.length >= 8) quad([4,5,6,7], 'rgba(240,166,61,.9)');
+  const steps = calSteps();
   calClicks.forEach((p, i) => {
     const x = p[0] + padX, y = p[1] + padY;
-    const col = i < 4 ? '#5b82e8' : i < 8 ? '#f0a63d' : '#ff5c5c';
+    const col = i < 4 ? '#5b82e8' : i < 8 ? '#f0a63d' : i === 8 ? '#ff5c5c' : '#8b6bf0';
     ctx.beginPath(); ctx.arc(x, y, 13, 0, 7); ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill();
     ctx.beginPath(); ctx.arc(x, y, 10, 0, 7); ctx.fillStyle = col; ctx.fill();
     ctx.fillStyle = '#fff'; ctx.font = '800 11px Archivo, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(CAL_STEPS[i].chip, x, y + 4);
+    ctx.fillText(steps[i].chip, x, y + 4);
   });
 }
 const calCanvas = $('calCanvas'), loupe = $('loupe'), loupeC = $('loupeCanvas');
@@ -954,13 +1040,13 @@ calCanvas.addEventListener('mousemove', e => {
 });
 calCanvas.addEventListener('mouseleave', () => loupe.style.display = 'none');
 calCanvas.onclick = e => {
-  if (calClicks.length >= N_CLICKS) return;
+  if (calClicks.length >= calSteps().length) return;
   const r = calCanvas.getBoundingClientRect();
   const cx = (e.clientX - r.left) * calCanvas.width / r.width;
   const cy = (e.clientY - r.top) * calCanvas.height / r.height;
   const fx = cx - padX, fy = cy - padY;
   const inFrame = fx >= 0 && fy >= 0 && fx <= calImg.width && fy <= calImg.height;
-  if (calClicks.length >= 4 && !inFrame) { toast('Kitchen corners and your own position must be inside the frame', true); return; }
+  if (calClicks.length >= 4 && !inFrame) { toast('Kitchen corners and player positions must be inside the frame', true); return; }
   calClicks.push([fx, fy]);
   drawCal(); updateCalUI();
 };
@@ -968,10 +1054,12 @@ function undoCal() { calClicks.pop(); drawCal(); updateCalUI(); }
 function resetCal() { calClicks = []; drawCal(); updateCalUI(); }
 
 async function submitCal() {
+  const body = { corners_px: calClicks.slice(0, 4), kitchen_px: calClicks.slice(4, 8), self_px: calClicks[8] };
+  if (matchType === 'doubles') body.partner_px = calClicks[9];
   try {
     await api('/session/' + sid + '/calibrate', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ corners_px: calClicks.slice(0, 4), kitchen_px: calClicks.slice(4, 8), self_px: calClicks[8] }),
+      body: JSON.stringify(body),
     });
   } catch (e) { toast('Calibration failed: ' + e, true); return; }
   lastMsgStage = null;
@@ -1032,6 +1120,8 @@ async function showResults(s) {
     '<span class="val">' + m.zone_pct[z] + '%</span></div>').join('');
   animateBars($('zones'));
   drawHeatmap(m, true);
+  drawMovementCurve(m.movement_curve);
+  loadSubjectMarker(sid);
   renderRallies(s.events);
   renderShots(s.shots);
   renderPoints(s.points, s.events);
@@ -1041,11 +1131,12 @@ async function showResults(s) {
 /* ---- DUPR reveal ---- */
 function renderDupr(d) {
   const body = $('duprBody');
-  if (!d) { body.innerHTML = '<div class="empty" style="margin-top:8px">Skill estimate not computed for this session — hit Re-analyze.</div>'; $('tipBox').innerHTML = '<div class="empty">No tips for this session.</div>'; return; }
+  if (!d) { body.innerHTML = '<div class="empty" style="margin-top:8px">Skill estimate not computed for this session — hit Re-analyze.</div>'; $('tipBox').innerHTML = '<div class="empty">No tips for this session.</div>'; $('drillBox').style.display = 'none'; return; }
   if (!d.available) {
     body.innerHTML = '<div class="caveat" style="margin-top:12px">' + warnSVG + '<span>' + esc(d.reason || 'Not enough signal for a skill estimate.') +
       (d.caveats || []).map(c => '<br>· ' + esc(c)).join('') + '</span></div>';
     $('tipBox').innerHTML = '<div class="empty">No tips for this session.</div>';
+    $('drillBox').style.display = 'none';
     return;
   }
   const conf = Math.round(d.confidence * 100);
@@ -1095,6 +1186,15 @@ function renderDupr(d) {
   $('tipBox').innerHTML = (d.tips && d.tips.length)
     ? d.tips.map(t => '<div class="coach">' + tipSVG + '<span>' + esc(t) + '</span></div>').join('')
     : '<div class="empty">No tips for this session.</div>';
+  const drillEl = $('drillBox');
+  if (d.drill) {
+    drillEl.style.display = 'block';
+    drillEl.innerHTML = '<div class="caveat" style="border-color:var(--accentline,var(--line2))">' +
+      '<div><b>Drill: ' + esc(d.drill.name) + '</b> <span class="mut">(' + esc(d.drill.reps) + ' — targets ' + esc(d.drill.target_label) + ')</span>' +
+      '<div style="margin-top:6px">' + esc(d.drill.description) + '</div></div></div>';
+  } else {
+    drillEl.style.display = 'none';
+  }
 }
 
 function celebrate() {
@@ -1117,6 +1217,15 @@ function downloadReport() {
   if (DEMO) { toast('PDF report needs the live backend'); return; }
   window.open('/api/session/' + sid + '/report.pdf', '_blank');
 }
+function downloadHighlights() {
+  if (DEMO) { toast('Highlight reel needs the live backend'); return; }
+  toast('Building highlight reel…');
+  window.open('/api/session/' + sid + '/highlights.mp4', '_blank');
+}
+const PLAYER_LABELS = { subject: 'you', partner: 'partner', opponent1: 'opp1', opponent2: 'opp2' };
+function isMyTeam(label) { return label === 'my_team' || label === 'subject' || label === 'partner'; }
+function isOppTeam(label) { return label === 'opp_team' || label === 'opponent1' || label === 'opponent2'; }
+function playerName(label) { return PLAYER_LABELS[label] || label; }
 function renderPoints(pt, ev) {
   $('pointStats').innerHTML = ''; $('pointBars').innerHTML = ''; $('pointNote').innerHTML = '';
   if (!pt) { $('pointNote').innerHTML = '<div class="empty">Point scoring not run for this session.</div>'; return; }
@@ -1145,21 +1254,29 @@ function renderPoints(pt, ev) {
       outs.map((o, i) => {
         const h = hitsArr[i] ? hitsArr[i].hits : 4;
         const hh = Math.round(8 + 24 * Math.min(1, h / maxh));
-        const col = o.winner === 'subject' ? 'var(--green)' : o.winner === 'opponent' ? 'var(--red)' : 'var(--faint)';
-        const t = 'Rally ' + (i + 1) + (o.winner === 'subject' ? ' — won' : o.winner === 'opponent' ? ' — lost' : '') + (o.unforced_error ? ' (UE)' : '');
+        const col = isMyTeam(o.winner) ? 'var(--green)' : isOppTeam(o.winner) ? 'var(--red)' : 'var(--faint)';
+        const t = 'Rally ' + (i + 1) + (isMyTeam(o.winner) ? ' — won' : isOppTeam(o.winner) ? ' — lost' : '') + (o.unforced_error ? ' (UE)' : '');
         return '<i class="mseg" title="' + t + '" style="height:' + hh + 'px;background:' + col + ';animation-delay:' + (i * 55) + 'ms"></i>';
       }).join('') + '</div></div>';
   }
   if (outs.length) {
-    const badge = o => o.winner === 'subject' ? '<span class="wbadge win">WON</span>'
-      : o.winner === 'opponent' ? '<span class="wbadge loss">LOST</span>' : '';
+    const badge = o => isMyTeam(o.winner) ? '<span class="wbadge win">WON' + (o.winner === 'partner' ? ' (partner)' : '') + '</span>'
+      : isOppTeam(o.winner) ? '<span class="wbadge loss">LOST</span>' : '';
     note += '<div class="outcomes">' + outs.map((o, i) => {
       const ev2 = ev && ev.rallies && ev.rallies[i];
       return '<div class="orow"><span class="oidx">' + String(i+1).padStart(2,'0') + '</span>' +
         '<span class="oinfo">' + (ev2 ? ev2.hits + ' hits' : 'rally ' + (i+1)) +
-        (o.server && o.server !== 'unknown' ? ' · ' + (o.server === 'subject' ? 'you served' : 'opp. served') : '') + '</span>' +
+        (o.server && o.server !== 'unknown' ? ' · ' + (isMyTeam(o.server) ? playerName(o.server) + ' served' : 'opp. served') : '') + '</span>' +
         (o.unforced_error ? '<span class="wbadge ue">UE</span>' : '') + badge(o) + '</div>';
     }).join('') + '</div>';
+  }
+  const hbp = pt.hits_by_player || {};
+  if (Object.keys(hbp).length > 2) {  // singles is at most subject+opponent1 — only show for doubles
+    note += '<div class="bars" style="margin-top:14px">' + Object.keys(hbp).map(k =>
+      '<div class="bar"><span class="lb">' + playerName(k) + '</span>' +
+      '<div class="track"><div class="fill" data-w="' + hbp[k] + '" style="background:var(--accent);width:' +
+        Math.round(100 * hbp[k] / Math.max(1, ...Object.values(hbp))) + '%"></div></div>' +
+      '<span class="val">' + hbp[k] + '</span></div>').join('') + '</div>';
   }
   $('pointNote').innerHTML = note;
 }
@@ -1189,6 +1306,59 @@ function renderShots(sh) {
       '<span class="val">' + mix[k] + '</span></div>';
   }).join('');
   animateBars($('shotMix'));
+
+  const withPos = (sh.shots || []).filter(s => s.x != null && s.y != null);
+  const vizWrap = $('shotVizWrap');
+  if (withPos.length) {
+    vizWrap.style.display = 'flex';
+    drawShotHeatmap(withPos);
+  } else {
+    vizWrap.style.display = 'none';
+  }
+  const serveCard = $('serveVizCard');
+  if (sh.serve_side_counts && Object.keys(sh.serve_side_counts).length) {
+    vizWrap.style.display = 'flex';
+    serveCard.style.display = 'flex';
+    const counts = sh.serve_side_counts, max = Math.max(1, ...Object.values(counts));
+    $('serveMapBars').innerHTML = ['left','middle','right'].map(side => {
+      const n = counts[side] || 0;
+      return '<div class="bar"><span class="lb">' + side + '</span>' +
+        '<div class="track"><div class="fill" data-w="' + Math.round(100 * n / max) + '%" style="background:var(--accent)"></div></div>' +
+        '<span class="val">' + n + '</span></div>';
+    }).join('');
+    animateBars($('serveMapBars'));
+  } else {
+    serveCard.style.display = 'none';
+  }
+}
+const SHOT_TYPE_COLORS = { drive: '#5b82e8', dink: '#39d5ff', drop: '#f0a63d', medium: '#8b6bf0', unknown: '#6b7280' };
+function drawShotHeatmap(shots) {
+  const c = $('shotHeatCanvas'), ctx = c.getContext('2d');
+  const S = 8, P = 20, W = 20, L = 44;  // court feet: width x length
+  c.width = Math.round(W * S) + P * 2; c.height = Math.round(L * S) + P * 2;
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel2').trim();
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--line2').trim();
+  ctx.lineWidth = 2;
+  ctx.strokeRect(P, P, W * S, L * S);
+  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--dim').trim();
+  ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(P, P + 22 * S); ctx.lineTo(P + W * S, P + 22 * S); ctx.stroke();
+  const px = x => P + Math.max(0, Math.min(W, x)) * S;
+  const py = y => P + Math.max(0, Math.min(L, y)) * S;
+  shots.forEach(s => {
+    ctx.beginPath();
+    ctx.arc(px(s.x), py(s.y), 4, 0, 7);
+    ctx.fillStyle = SHOT_TYPE_COLORS[s.type] || SHOT_TYPE_COLORS.unknown;
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  });
+  const types = [...new Set(shots.map(s => s.type))];
+  $('shotHeatLegend').innerHTML = types.map(t =>
+    '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">' +
+    '<span style="width:9px;height:9px;border-radius:50%;background:' + (SHOT_TYPE_COLORS[t] || SHOT_TYPE_COLORS.unknown) + ';display:inline-block"></span>' +
+    esc(t) + '</span>').join('');
 }
 
 function renderRallies(ev) {
@@ -1285,23 +1455,119 @@ function drawHeatmap(m, animate, cid) {
   heatRAF = requestAnimationFrame(frame);
 }
 
+function drawMovementCurve(curve) {
+  const wrap = $('curveWrap');
+  if (!curve || curve.length < 2) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'block';
+  const c = $('curveCanvas'), ctx = c.getContext('2d');
+  const Wd = 560, Hd = 140, P = 30;
+  c.width = Wd; c.height = Hd;
+  const V = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  ctx.clearRect(0, 0, Wd, Hd);
+  const speeds = curve.map(p => p.avg_speed_ft_s);
+  const maxS = Math.max(1, ...speeds), minS = Math.min(...speeds);
+  const x = i => P + (i / (curve.length - 1)) * (Wd - P * 1.5);
+  const y = v => Hd - P + (1 - (v - minS) / Math.max(1e-6, maxS - minS)) * (Hd - P * 1.7);
+  ctx.strokeStyle = V('--line2'); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(P, Hd - P); ctx.lineTo(Wd - 10, Hd - P); ctx.stroke();
+  ctx.strokeStyle = V('--accent'); ctx.lineWidth = 2.5; ctx.beginPath();
+  curve.forEach((p, i) => { const px = x(i), py = y(p.avg_speed_ft_s); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke();
+  ctx.fillStyle = V('--accent');
+  curve.forEach((p, i) => { ctx.beginPath(); ctx.arc(x(i), y(p.avg_speed_ft_s), 3, 0, 7); ctx.fill(); });
+  ctx.fillStyle = V('--muted'); ctx.font = '600 10px Archivo, sans-serif'; ctx.textAlign = 'center';
+  curve.forEach((p, i) => { if (i % Math.ceil(curve.length / 8 || 1) === 0) ctx.fillText(Math.round(p.t_start / 60) + 'm', x(i), Hd - 8); });
+}
+
+/* ---------------- subject/opponent marker ---------------- */
+async function loadSubjectMarker(id) {
+  const card = $('subjMarkerCard');
+  let data;
+  try { data = await api('/session/' + id + '/subject-marker'); }
+  catch (e) { card.style.display = 'none'; return; }
+  const opponents = data && data.opponents && data.opponents.length ? data.opponents : (data && data.opponent ? [data.opponent] : []);
+  if (!data || (!data.subject && !data.partner && !opponents.length)) { card.style.display = 'none'; return; }
+  card.style.display = 'flex';
+  const img = new Image();
+  img.onload = () => drawSubjectMarker(img, data, opponents);
+  img.src = frameURL();
+}
+function drawSubjectMarker(img, data, opponents) {
+  const c = $('subjCanvas'), ctx = c.getContext('2d');
+  c.width = img.width; c.height = img.height;
+  ctx.drawImage(img, 0, 0);
+  const box = (b, color, label, dashed) => {
+    if (!b) return;
+    ctx.strokeStyle = color; ctx.lineWidth = 3;
+    ctx.setLineDash(dashed ? [10, 6] : []);
+    ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+    ctx.setLineDash([]);
+    ctx.fillStyle = color;
+    const tw = ctx.measureText(label).width + 10;
+    ctx.fillRect(b.x1, Math.max(0, b.y1 - 20), tw, 20);
+    ctx.fillStyle = '#0a1428'; ctx.font = '800 12px Archivo, sans-serif';
+    ctx.fillText(label, b.x1 + 5, Math.max(14, b.y1 - 5));
+  };
+  const V = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  box(data.subject, V('--accent'), 'YOU', false);
+  box(data.partner, '#8b6bf0', 'PARTNER', false);
+  opponents.forEach((b, i) => box(b, V('--red'), opponents.length > 1 ? 'OPP' + (i + 1) : 'OPPONENT', true));
+  const frames = [data.subject, data.partner, ...opponents].filter(Boolean).map(b => b.frame || 0);
+  const delta = frames.length ? Math.max(...frames) : 0;
+  const legend = 'solid = YOU' + (data.partner ? '/PARTNER' : '') + ' · dashed = opponent' + (opponents.length > 1 ? 's' : '');
+  $('subjNote').innerHTML = legend +
+    (delta > 0 ? ' <span class="caveat" style="display:inline;padding:2px 6px;margin-left:6px">approximate — detected ' + delta + ' frames in</span>' : '');
+}
+
 /* ---------------- meta editing ---------------- */
 function fillMeta(meta) {
   $('mLabel').value = (meta && meta.label) || '';
+  $('mOpponent').value = (meta && meta.opponent) || '';
   $('mDate').value = (meta && meta.played_at) || '';
   $('mDupr').value = (meta && meta.known_dupr) || '';
+  $('mNotes').value = (meta && meta.notes) || '';
+  $('mContext').value = (meta && meta.context) || '';
   $('mSaved').classList.remove('on');
+  loadHeadToHead();
 }
 async function saveMeta() {
   const body = {};
   if ($('mLabel').value) body.label = $('mLabel').value;
+  if ($('mOpponent').value) body.opponent = $('mOpponent').value;
   if ($('mDate').value) body.played_at = $('mDate').value;
   if ($('mDupr').value) body.known_dupr = parseFloat($('mDupr').value);
+  if ($('mNotes').value) body.notes = $('mNotes').value;
+  if ($('mContext').value) body.context = $('mContext').value;
   try {
     await api('/session/' + sid + '/meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     $('mSaved').classList.add('on');
     setTimeout(() => $('mSaved').classList.remove('on'), 2400);
   } catch (e) { toast('Save failed: ' + e, true); }
+}
+async function loadHeadToHead() {
+  const box = $('h2hBox');
+  const name = $('mOpponent').value.trim();
+  if (!name) { box.style.display = 'none'; return; }
+  let h;
+  try { h = await api('/opponents/' + encodeURIComponent(name) + '/history'); }
+  catch (e) { box.style.display = 'none'; return; }
+  if (!h || h.matches < 2) { box.style.display = 'none'; return; }  // 1 match = this session itself
+  box.style.display = 'block';
+  box.innerHTML = '<div class="caveat" style="display:flex">' +
+    '<span>Head-to-head vs <b>' + esc(name) + '</b>: <b>' + h.wins + '-' + h.losses + '</b>' +
+    (h.win_pct != null ? ' (' + h.win_pct + '% win rate' : '') + (h.win_pct != null ? ') across ' : ' across ') +
+    h.matches + ' session' + (h.matches === 1 ? '' : 's') + '</span></div>';
+}
+async function doReupload() {
+  const f = $('mReuploadFile').files[0];
+  if (!f || !sid) return;
+  const fd = new FormData();
+  fd.append('file', f);
+  try {
+    await api('/session/' + sid + '/reupload', { method: 'POST', body: fd });
+    toast('Video replaced — reprocessing…');
+    openSession(sid);
+  } catch (e) { toast('Replace failed: ' + e, true); }
 }
 
 /* ---------------- sessions list ---------------- */
@@ -1368,17 +1634,65 @@ function updateDelBtn() {
   const b = $('delBtn');
   b.disabled = !n;
   if (!delArmed) b.textContent = n ? 'Delete selected (' + n + ')' : 'Delete selected';
-  const c = $('cmpBtn'); if (c) c.disabled = n !== 2;
+  const c = $('cmpBtn'); if (c) { c.disabled = n < 2; c.textContent = n >= 2 ? 'Compare ' + n : 'Compare'; }
 }
 async function compareClicked() {
   const ids = selectedIds();
-  if (ids.length !== 2) return;
+  if (ids.length < 2) return;
   show('compare');
   $('cmpBody').innerHTML = '<div class="empty">Comparing…</div>';
-  let r;
-  try { r = await api('/compare?a=' + encodeURIComponent(ids[0]) + '&b=' + encodeURIComponent(ids[1])); }
-  catch (e) { $('cmpBody').innerHTML = '<div class="caveat red">' + warnSVG + '<span>Could not compare: ' + esc(String(e)) + '</span></div>'; return; }
-  renderCompare(r);
+  $('clipCmpCard').style.display = 'none';
+  if (ids.length === 2) {
+    let r;
+    try { r = await api('/compare?a=' + encodeURIComponent(ids[0]) + '&b=' + encodeURIComponent(ids[1])); }
+    catch (e) { $('cmpBody').innerHTML = '<div class="caveat red">' + warnSVG + '<span>Could not compare: ' + esc(String(e)) + '</span></div>'; return; }
+    renderCompare(r);
+    loadClipCompare(ids[0], ids[1]);
+  } else {
+    let r;
+    try { r = await api('/compare/multi?ids=' + ids.map(encodeURIComponent).join(',')); }
+    catch (e) { $('cmpBody').innerHTML = '<div class="caveat red">' + warnSVG + '<span>Could not compare: ' + esc(String(e)) + '</span></div>'; return; }
+    renderCompareMulti(r.sessions || []);
+  }
+}
+let clipCmpIds = [null, null];
+async function loadClipCompare(idA, idB) {
+  if (DEMO) return;  // rally clips need the live backend
+  let sa, sb;
+  try { [sa, sb] = await Promise.all([api('/session/' + idA), api('/session/' + idB)]); }
+  catch (e) { return; }
+  const ralliesA = (sa.events && sa.events.rallies) || [];
+  const ralliesB = (sb.events && sb.events.rallies) || [];
+  if (!ralliesA.length || !ralliesB.length) return;
+  clipCmpIds = [idA, idB];
+  $('clipCmpCard').style.display = 'block';
+  $('clipCmpLabelA').textContent = (sa.meta && (sa.meta.label || sa.meta.filename)) || 'Session A';
+  $('clipCmpLabelB').textContent = (sb.meta && (sb.meta.label || sb.meta.filename)) || 'Session B';
+  const opt = r => '<option value="' + r.i + '">Rally ' + (r.i + 1) + ' — ' + r.hits + ' hits · ' + r.duration + 's</option>';
+  $('clipCmpRallyA').innerHTML = ralliesA.map((r, i) => opt({ ...r, i })).join('');
+  $('clipCmpRallyB').innerHTML = ralliesB.map((r, i) => opt({ ...r, i })).join('');
+  $('clipCmpVideoA').src = '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
+  $('clipCmpVideoB').src = '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
+}
+function playBothClips() {
+  const [idA, idB] = clipCmpIds;
+  if (!idA || !idB) return;
+  const va = $('clipCmpVideoA'), vb = $('clipCmpVideoB');
+  va.src = '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
+  vb.src = '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
+  Promise.all([va.play().catch(() => {}), vb.play().catch(() => {})]);
+}
+function renderCompareMulti(sessions) {
+  const names = sessions.map(s => esc(s.label || s.played_at || s.session_id));
+  const rows = CMP_FIELDS.filter(([k]) => sessions.some(s => s[k] != null)).map(([k,l,pre,suf]) =>
+    '<div class="cmprow" style="grid-template-columns:180px repeat(' + sessions.length + ', 1fr)">' +
+      '<span class="clabel">' + l + '</span>' +
+      sessions.map(s => '<span class="cval">' + fmtCmp(s[k],pre,suf) + '</span>').join('') +
+    '</div>').join('');
+  $('cmpBody').innerHTML =
+    '<div class="cmprow chead" style="grid-template-columns:180px repeat(' + sessions.length + ', 1fr)">' +
+      '<span class="clabel">Metric</span>' + names.map(n => '<span class="cval">' + n + '</span>').join('') +
+    '</div>' + rows;
 }
 const CMP_FIELDS = [
   ['dupr_band','Est. level','~',''],['win_pct','Win rate','','%'],['kitchen_pct','Kitchen time','','%'],
@@ -1415,7 +1729,7 @@ async function deleteClicked() {
   if (!delArmed) {
     delArmed = true;
     b.className = 'danger sm';
-    b.textContent = 'Really delete ' + ids.length + '? This is permanent';
+    b.textContent = 'Really delete ' + ids.length + '? (moves to trash)';
     delTimer = setTimeout(disarmDelete, 4000);
     return;
   }
@@ -1444,8 +1758,16 @@ async function openSession(id) {
 
 /* ---------------- Sessions page ---------------- */
 async function loadSessionsPage() {
+  const q = new URLSearchParams();
+  const fLabel = $('sFilterLabel'), fOpp = $('sFilterOpponent'), fFrom = $('sFilterFrom'), fTo = $('sFilterTo'), fCtx = $('sFilterContext');
+  if (fLabel && fLabel.value) q.set('label', fLabel.value);
+  if (fOpp && fOpp.value) q.set('opponent', fOpp.value);
+  if (fFrom && fFrom.value) q.set('date_from', fFrom.value);
+  if (fTo && fTo.value) q.set('date_to', fTo.value);
+  if (fCtx && fCtx.value) q.set('context', fCtx.value);
+  const qs = q.toString();
   let list;
-  try { list = await api('/sessions'); } catch (e) { return; }
+  try { list = await api('/sessions' + (qs ? '?' + qs : '')); } catch (e) { return; }
   window._pcSessions = list;
   disarmDelete();
   $('sessCount').textContent = list.length ? (list.length + (list.length === 1 ? ' session' : ' sessions')) : 'No sessions yet';
@@ -1455,12 +1777,13 @@ async function loadSessionsPage() {
     const running = s.state === 'running' || s.state === 'queued';
     const done = s.state === 'done' && s.stage === 'done';
     const pillCls = done ? 'done' : s.state === 'error' ? 'error' : running ? 'running' : '';
-    const pillTxt = s.stage === 'done' ? 'complete' : s.state === 'error' ? 'error' : (STAGE_NAMES[s.stage] || s.stage);
+    let pillTxt = s.stage === 'done' ? 'complete' : s.state === 'error' ? 'error' : (STAGE_NAMES[s.stage] || s.stage);
+    if (s.stage === 'queued' && s.queue_position) pillTxt = 'queued · #' + s.queue_position;
     const band = s.dupr_band != null ? '~' + s.dupr_band : '';
     return '<div class="strow" style="animation-delay:' + (i * 45) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
       '<input type="checkbox" class="cb selBox" value="' + s.session_id + '" onclick="event.stopPropagation(); updateDelBtn()">' +
       '<div class="scell"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div>' +
-        '<div class="sub">' + (s.played_at || fmtDate(s.uploaded_at)) + (s.known_dupr ? ' · known DUPR ' + s.known_dupr : '') + '</div></div>' +
+        '<div class="sub">' + (s.played_at || fmtDate(s.uploaded_at)) + (s.opponent ? ' · vs ' + esc(s.opponent) : '') + (s.known_dupr ? ' · known DUPR ' + s.known_dupr : '') + '</div></div>' +
       '<div class="scell dupr">' + (band || '<span class="mut">—</span>') + '</div>' +
       '<div class="scell num">' + (s.kitchen_pct != null ? s.kitchen_pct + '%' : '<span class="mut">—</span>') + '</div>' +
       '<div class="scell num">' + (s.avg_rally_hits != null ? s.avg_rally_hits : '<span class="mut">—</span>') + '</div>' +
@@ -1468,6 +1791,32 @@ async function loadSessionsPage() {
         (running && s.overall != null ? '<div class="minibar" style="margin-top:6px"><i style="width:' + Math.round(100*s.overall) + '%"></i></div>' : '') + '</div>' +
       '</div>';
   }).join('');
+}
+
+/* ---------------- Trash ---------------- */
+async function openTrash() {
+  const card = $('trashCard');
+  const opening = card.style.display === 'none';
+  card.style.display = opening ? 'block' : 'none';
+  if (opening) await refreshTrash();
+}
+async function refreshTrash() {
+  let list;
+  try { list = await api('/sessions/trash'); } catch (e) { return; }
+  if (!list.length) { $('trashTable').innerHTML = '<div class="empty">Trash is empty.</div>'; return; }
+  $('trashTable').innerHTML = list.map(s =>
+    '<div class="strow" style="grid-template-columns:1fr auto">' +
+      '<div class="scell"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div></div>' +
+      '<button class="ghost sm" onclick="restoreSession(\'' + s.session_id + '\')">Restore</button>' +
+    '</div>').join('');
+}
+async function restoreSession(id) {
+  try {
+    await api('/sessions/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [id] }) });
+    toast('Restored');
+    refreshTrash();
+    loadSessionsPage();
+  } catch (e) { toast('Restore failed: ' + e, true); }
 }
 
 /* ---------------- Trends page ---------------- */

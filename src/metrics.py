@@ -13,13 +13,33 @@ CELL_FT = 2.0  # heatmap cell size
 GRID_W = int(COURT_W / CELL_FT)   # 10
 GRID_L = int(COURT_L / CELL_FT)   # 22
 MAX_SPEED_FT_S = 30.0  # displacement cap: faster than any human = tracking glitch
+MOVEMENT_BUCKET_S = 60.0  # movement-curve window — coarse enough to smooth noise
+MIN_BUCKET_SAMPLES = 3    # skip a bucket with too little signal to average honestly
+
+
+def _movement_curve(step_t: np.ndarray, speed: np.ndarray, valid: np.ndarray) -> list[dict]:
+    """Avg movement speed per MOVEMENT_BUCKET_S window, for a fatigue/momentum
+    plot over the course of the session. Buckets with too few valid samples
+    are skipped rather than shown as a misleadingly flat/zero value."""
+    if not len(step_t):
+        return []
+    bucket_idx = (step_t // MOVEMENT_BUCKET_S).astype(int)
+    curve = []
+    for b in range(int(bucket_idx.max()) + 1):
+        m = (bucket_idx == b) & valid
+        if m.sum() < MIN_BUCKET_SAMPLES:
+            continue
+        curve.append({"t_start": round(b * MOVEMENT_BUCKET_S, 1),
+                      "avg_speed_ft_s": round(float(speed[m].mean()), 2)})
+    return curve
 
 
 def _smooth(series: pd.Series, window: int = 5) -> pd.Series:
     return series.rolling(window, center=True, min_periods=1).median()
 
 
-def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0) -> dict:
+def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
+                    secondary_court_tracks: int = 0) -> dict:
     if len(pos) < fps * 2:
         raise ValueError("subject visible for under 2 seconds — cannot analyze")
 
@@ -38,6 +58,7 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0) -> dict
     distance_ft = float(step[valid].sum())
     active_s = float(t[-1] - t[0])
     avg_speed = distance_ft / active_s if active_s > 0 else 0.0
+    movement_curve = _movement_curve(t[1:], speed, valid)
 
     # zone occupancy
     zones = pd.Series([zone_for(v) for v in y])
@@ -67,6 +88,10 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0) -> dict
         warnings.append(
             f"{camera_cuts} camera cuts detected — this looks like broadcast/edited "
             "footage. A fixed tripod angle gives much more reliable analysis.")
+    if secondary_court_tracks > 0:
+        warnings.append(
+            "Multiple players detected on court — doubles/crowded court isn't "
+            "fully supported yet, so opponent stats may be unreliable.")
 
     return {
         "frames_analyzed": int(len(pos)),
@@ -78,6 +103,8 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0) -> dict
         "coverage_pct": coverage_pct,
         "heatmap": grid.tolist(),
         "heatmap_cell_ft": CELL_FT,
+        "movement_curve": movement_curve,
         "camera_cuts": camera_cuts,
+        "secondary_court_tracks": secondary_court_tracks,
         "warnings": warnings,
     }

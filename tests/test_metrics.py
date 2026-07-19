@@ -67,8 +67,43 @@ def test_too_short_rejected():
         pass
 
 
+def test_secondary_court_tracks_warns():
+    pos = make_track([16.0, 16.0])
+    clean = compute_metrics(pos, FPS, secondary_court_tracks=0)
+    doubles = compute_metrics(pos, FPS, secondary_court_tracks=1)
+    assert clean["secondary_court_tracks"] == 0
+    assert not any("Multiple players" in w for w in clean["warnings"])
+    assert doubles["secondary_court_tracks"] == 1
+    assert any("Multiple players" in w for w in doubles["warnings"])
+
+
+def test_movement_curve_separates_fast_and_slow_windows():
+    # bucket 0 (t 0-60s): brisk lateral movement every frame
+    # bucket 1 (t 60-120s): standing nearly still
+    n_fast, n_slow = int(60 * FPS), int(60 * FPS)
+    fast_x = 10.0 + 0.05 * np.sin(np.arange(n_fast) * 0.5)  # oscillates -> real movement
+    slow_x = np.full(n_slow, 10.0)  # stationary
+    frames = np.arange(n_fast + n_slow)
+    x = np.concatenate([fast_x, slow_x])
+    pos = pd.DataFrame({"frame": frames, "t": frames / FPS, "x": x, "y": 16.0})
+    m = compute_metrics(pos, FPS)
+    curve = m["movement_curve"]
+    by_bucket = {c["t_start"]: c["avg_speed_ft_s"] for c in curve}
+    assert 0.0 in by_bucket
+    assert by_bucket[0.0] > by_bucket.get(60.0, 0.0)
+
+
+def test_movement_curve_empty_for_short_track():
+    pos = make_track([16.0, 16.0])  # ~2s, no buckets can accumulate MIN_BUCKET_SAMPLES gaps
+    m = compute_metrics(pos, FPS)
+    assert isinstance(m["movement_curve"], list)
+
+
 if __name__ == "__main__":
     for fn in [test_zone_split, test_distance_glitch_capped, test_determinism,
-               test_heatmap_shape_and_mass, test_too_short_rejected]:
+               test_heatmap_shape_and_mass, test_too_short_rejected,
+               test_secondary_court_tracks_warns,
+               test_movement_curve_separates_fast_and_slow_windows,
+               test_movement_curve_empty_for_short_track]:
         fn()
         print(f"ok {fn.__name__}")

@@ -7,9 +7,9 @@ import uuid
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 import pipeline
 from pipeline import SESSIONS, get_status, session_dir
@@ -25,16 +25,30 @@ class Calibration(BaseModel):
     corners_px: list[list[float]] = Field(min_length=4, max_length=4)
     kitchen_px: list[list[float]] | None = Field(default=None, min_length=4, max_length=4)
     self_px: list[float] = Field(min_length=2, max_length=2)
+    partner_px: list[float] | None = Field(default=None, min_length=2, max_length=2)
 
 
 class BulkDelete(BaseModel):
     ids: list[str] = Field(min_length=1)
 
 
+SESSION_CONTEXTS = {"practice", "league", "tournament"}
+
+
 class MetaPatch(BaseModel):
     label: str | None = Field(default=None, max_length=120)
     played_at: str | None = Field(default=None, max_length=10)  # YYYY-MM-DD
     known_dupr: float | None = Field(default=None, ge=2.0, le=8.0)
+    notes: str | None = Field(default=None, max_length=500)
+    opponent: str | None = Field(default=None, max_length=80)
+    context: str | None = Field(default=None)
+
+    @field_validator("context")
+    @classmethod
+    def _valid_context(cls, v):
+        if v is not None and v not in SESSION_CONTEXTS:
+            raise ValueError(f"context must be one of {sorted(SESSION_CONTEXTS)}")
+        return v
 
 
 @app.get("/")
@@ -46,14 +60,13 @@ MAX_UPLOAD_BYTES = 2 << 30  # 2 GB
 WARN_DURATION_S = 30 * 60
 
 
-@app.post("/api/upload")
-async def upload(file: UploadFile):
+async def _save_upload(sdir: Path, file: UploadFile) -> Path:
+    """Validate extension + size, stream file into sdir/raw{ext}. Raises
+    HTTPException on bad ext / oversize; cleans up its own partial write but
+    leaves sdir itself for the caller to manage."""
     ext = Path(file.filename or "clip.mp4").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"unsupported file type {ext}")
-    sid = uuid.uuid4().hex[:12]
-    sdir = SESSIONS / sid
-    sdir.mkdir(parents=True)
     raw = sdir / f"raw{ext}"
     written = 0
     with raw.open("wb") as f:
@@ -61,10 +74,28 @@ async def upload(file: UploadFile):
             written += len(chunk)
             if written > MAX_UPLOAD_BYTES:
                 f.close()
-                shutil.rmtree(sdir)
+                raw.unlink(missing_ok=True)
                 raise HTTPException(413, "upload exceeds 2 GB limit")
             f.write(chunk)
-    meta = {"filename": file.filename}
+    return raw
+
+
+MATCH_TYPES = {"singles", "doubles"}
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile, match_type: str = Form("singles")):
+    if match_type not in MATCH_TYPES:
+        raise HTTPException(400, f"match_type must be one of {sorted(MATCH_TYPES)}")
+    sid = uuid.uuid4().hex[:12]
+    sdir = SESSIONS / sid
+    sdir.mkdir(parents=True)
+    try:
+        raw = await _save_upload(sdir, file)
+    except HTTPException:
+        shutil.rmtree(sdir)
+        raise
+    meta = {"filename": file.filename, "match_type": match_type}
     dur = pipeline.probe_video(raw).get("duration", 0.0)
     if dur > WARN_DURATION_S:
         meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
@@ -74,35 +105,88 @@ async def upload(file: UploadFile):
     return {"session_id": sid, "duration_s": dur, "warning": meta.get("warning")}
 
 
+@app.post("/api/session/{sid}/reupload")
+async def reupload(sid: str, file: UploadFile):
+    """Replace a session's source video without changing its session id —
+    for when the first upload was wrong or corrupt. Clears all derived
+    analysis artifacts and re-runs ingest."""
+    sdir = _sdir(sid)
+    for old in sdir.glob("raw.*"):
+        old.unlink(missing_ok=True)
+    raw = await _save_upload(sdir, file)
+    pipeline.clear_derived(sdir)
+    (sdir / "calibration.json").unlink(missing_ok=True)
+    for name in ("video.mp4", "audio.wav", "frame0.jpg", "tracks.parquet",
+                "ball.parquet", "ingest.json"):
+        (sdir / name).unlink(missing_ok=True)
+    meta_f = sdir / "meta.json"
+    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    meta["filename"] = file.filename
+    meta.pop("warning", None)
+    dur = pipeline.probe_video(raw).get("duration", 0.0)
+    if dur > WARN_DURATION_S:
+        meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
+                           "while; consider splitting into games")
+    meta_f.write_text(json.dumps(meta))
+    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
+    return {"session_id": sid, "duration_s": dur, "warning": meta.get("warning")}
+
+
+TRASH = SESSIONS / ".trash"
+TRASH_RETENTION_S = 7 * 24 * 3600
+
+
 @app.get("/api/sessions")
-def sessions():
+def sessions(label: str | None = None, opponent: str | None = None,
+            date_from: str | None = None, date_to: str | None = None,
+            context: str | None = None):
+    """Session list, newest first. Optional case-insensitive substring filters
+    on label/opponent, an inclusive played_at date range (YYYY-MM-DD), and an
+    exact match on context (practice/league/tournament)."""
     out = []
     if SESSIONS.exists():
         for d in sorted(SESSIONS.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if d.is_dir():
-                meta_f = d / "meta.json"
-                meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
-                status = get_status(d)
-                row = {
-                    "session_id": d.name,
-                    "filename": meta.get("filename"),
-                    "label": meta.get("label"),
-                    "played_at": meta.get("played_at"),
-                    "known_dupr": meta.get("known_dupr"),
-                    "uploaded_at": d.stat().st_mtime,
-                    **status,
-                }
-                if status.get("stage") == "done":
-                    # summary fields the sessions list/table renders directly —
-                    # real numbers, not a UI placeholder, for every completed row
-                    m = _load_json(d, "metrics.json")
-                    ev = _load_json(d, "events.json")
-                    dp = _load_json(d, "dupr.json")
-                    row["kitchen_pct"] = m.get("zone_pct", {}).get("kitchen")
-                    row["avg_rally_hits"] = ev.get("avg_rally_hits")
-                    row["dupr_band"] = dp.get("band")
-                    row["dupr_confidence"] = dp.get("confidence")
-                out.append(row)
+            if not d.is_dir() or d == TRASH:
+                continue
+            meta_f = d / "meta.json"
+            meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+            if label and label.lower() not in (meta.get("label") or "").lower():
+                continue
+            if opponent and opponent.lower() not in (meta.get("opponent") or "").lower():
+                continue
+            if context and meta.get("context") != context:
+                continue
+            played_at = meta.get("played_at")
+            if date_from and (not played_at or played_at < date_from):
+                continue
+            if date_to and (not played_at or played_at > date_to):
+                continue
+            status = get_status(d)
+            row = {
+                "session_id": d.name,
+                "filename": meta.get("filename"),
+                "label": meta.get("label"),
+                "played_at": meta.get("played_at"),
+                "known_dupr": meta.get("known_dupr"),
+                "notes": meta.get("notes"),
+                "opponent": meta.get("opponent"),
+                "context": meta.get("context"),
+                "uploaded_at": d.stat().st_mtime,
+                **status,
+            }
+            if status.get("stage") == "queued":
+                row["queue_position"] = pipeline.queue_position(d)
+            if status.get("stage") == "done":
+                # summary fields the sessions list/table renders directly —
+                # real numbers, not a UI placeholder, for every completed row
+                m = _load_json(d, "metrics.json")
+                ev = _load_json(d, "events.json")
+                dp = _load_json(d, "dupr.json")
+                row["kitchen_pct"] = m.get("zone_pct", {}).get("kitchen")
+                row["avg_rally_hits"] = ev.get("avg_rally_hits")
+                row["dupr_band"] = dp.get("band")
+                row["dupr_confidence"] = dp.get("confidence")
+            out.append(row)
     return out
 
 
@@ -154,6 +238,11 @@ def patch_meta(sid: str, patch: MetaPatch):
 
 @app.post("/api/sessions/delete")
 def delete_sessions(req: BulkDelete):
+    """Soft-delete: move each session into .trash/ (restorable) rather than
+    deleting outright. Trash is purged lazily (see _sweep_trash) after
+    TRASH_RETENTION_S."""
+    import time
+
     deleted, errors = [], []
     for sid in req.ids:
         try:
@@ -164,9 +253,77 @@ def delete_sessions(req: BulkDelete):
         if not d.exists():
             errors.append({"id": sid, "error": "not found"})
             continue
-        shutil.rmtree(d)
+        meta_f = d / "meta.json"
+        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        meta["deleted_at"] = time.time()
+        meta_f.write_text(json.dumps(meta))
+        TRASH.mkdir(parents=True, exist_ok=True)
+        dest = TRASH / sid
+        if dest.exists():  # stale leftover from a prior delete of the same id
+            shutil.rmtree(dest)
+        shutil.move(str(d), str(dest))
         deleted.append(sid)
     return {"deleted": deleted, "errors": errors}
+
+
+def _sweep_trash() -> None:
+    """Purge trashed sessions older than the retention window."""
+    import time
+
+    if not TRASH.exists():
+        return
+    now = time.time()
+    for d in TRASH.iterdir():
+        if not d.is_dir():
+            continue
+        meta_f = d / "meta.json"
+        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        deleted_at = meta.get("deleted_at", 0)
+        if now - deleted_at > TRASH_RETENTION_S:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+@app.get("/api/sessions/trash")
+def list_trash():
+    _sweep_trash()
+    out = []
+    if TRASH.exists():
+        for d in sorted(TRASH.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not d.is_dir():
+                continue
+            meta = _load_json(d, "meta.json")
+            out.append({
+                "session_id": d.name,
+                "label": meta.get("label"),
+                "filename": meta.get("filename"),
+                "deleted_at": meta.get("deleted_at"),
+            })
+    return out
+
+
+@app.post("/api/sessions/restore")
+def restore_sessions(req: BulkDelete):
+    restored, errors = [], []
+    for sid in req.ids:
+        try:
+            session_dir(sid)  # validates id shape, rejects traversal
+        except ValueError:
+            errors.append({"id": sid, "error": "bad session id"})
+            continue
+        d = TRASH / sid
+        if not d.exists():
+            errors.append({"id": sid, "error": "not found in trash"})
+            continue
+        meta_f = d / "meta.json"
+        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        meta.pop("deleted_at", None)
+        meta_f.write_text(json.dumps(meta))
+        dest = SESSIONS / sid
+        if dest.exists():  # stale leftover from a prior restore of the same id
+            shutil.rmtree(dest)
+        shutil.move(str(d), str(dest))
+        restored.append(sid)
+    return {"restored": restored, "errors": errors}
 
 
 def _sdir(sid: str) -> Path:
@@ -195,6 +352,7 @@ def _compare_summary(sdir: Path) -> dict:
         "session_id": sdir.name,
         "label": meta.get("label") or meta.get("filename") or sdir.name,
         "played_at": meta.get("played_at"),
+        "opponent": meta.get("opponent"),
         "kitchen_pct": zp.get("kitchen"),
         "transition_pct": zp.get("transition"),
         "distance_ft": m.get("distance_ft"),
@@ -211,7 +369,7 @@ def _compare_summary(sdir: Path) -> dict:
     }
 
 
-NON_METRIC_FIELDS = {"session_id", "label", "played_at"}
+NON_METRIC_FIELDS = {"session_id", "label", "played_at", "opponent"}
 
 
 @app.get("/api/compare")
@@ -231,10 +389,57 @@ def compare(a: str, b: str):
     return {"a": sa, "b": sb, "diffs": diffs}
 
 
+@app.get("/api/compare/multi")
+def compare_multi(ids: str):
+    """Compare 3+ sessions side by side (no pairwise deltas — just summaries).
+
+    ids is a comma-separated list of session ids, e.g. ?ids=a,b,c.
+    """
+    sids = [s for s in ids.split(",") if s]
+    if len(sids) < 2:
+        raise HTTPException(400, "provide at least 2 session ids")
+    dirs = [_sdir(s) for s in sids]
+    for d in dirs:
+        if get_status(d).get("stage") != "done":
+            raise HTTPException(409, f"session {d.name} is not ready to compare")
+    return {"sessions": [_compare_summary(d) for d in dirs]}
+
+
+@app.get("/api/opponents/{name}/history")
+def opponent_history(name: str):
+    """Aggregate win/loss record + per-session summaries against one named
+    opponent (case-insensitive exact match on the session's `opponent`
+    meta field), newest first."""
+    sessions_out = []
+    if SESSIONS.exists():
+        for d in sorted(SESSIONS.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not d.is_dir() or d == TRASH:
+                continue
+            meta = _load_json(d, "meta.json")
+            if (meta.get("opponent") or "").strip().lower() != name.strip().lower():
+                continue
+            if get_status(d).get("stage") != "done":
+                continue
+            sessions_out.append(_compare_summary(d))
+    known = [s for s in sessions_out if s.get("win_pct") is not None]
+    wins = sum(1 for s in known if s["points_won"] > s["points_lost"])
+    losses = sum(1 for s in known if s["points_lost"] > s["points_won"])
+    return {
+        "opponent": name,
+        "matches": len(sessions_out),
+        "wins": wins,
+        "losses": losses,
+        "win_pct": round(100.0 * wins / len(known), 1) if known else None,
+        "sessions": sessions_out,
+    }
+
+
 @app.get("/api/session/{sid}")
 def session(sid: str):
     sdir = _sdir(sid)
     resp = {"session_id": sid, **get_status(sdir)}
+    if resp.get("stage") == "queued":
+        resp["queue_position"] = pipeline.queue_position(sdir)
     meta_f = sdir / "meta.json"
     resp["meta"] = json.loads(meta_f.read_text()) if meta_f.exists() else {}
     for key, fname in (("metrics", "metrics.json"), ("events", "events.json"),
@@ -252,6 +457,21 @@ def clip(sid: str, n: int):
     if not f.exists():
         raise HTTPException(404, "clip not found")
     return FileResponse(f, media_type="video/mp4")
+
+
+@app.get("/api/session/{sid}/highlights.mp4")
+def highlights(sid: str):
+    """Auto-generated reel of the top rally clips (longest rallies first),
+    built on first request and cached until the session is recalibrated."""
+    sdir = _sdir(sid)
+    if get_status(sdir).get("stage") != "done":
+        raise HTTPException(409, "session not ready for a highlight reel")
+    out = sdir / "highlights.mp4"
+    if not out.exists():
+        if pipeline.build_highlights(sdir) is None:
+            raise HTTPException(404, "no rally clips available for a highlight reel")
+    return FileResponse(out, media_type="video/mp4",
+                        filename=f"dinkiq_highlights_{sid}.mp4")
 
 
 @app.get("/api/session/{sid}/report.pdf")
@@ -280,6 +500,40 @@ def frame(sid: str):
     return FileResponse(f)
 
 
+@app.get("/api/session/{sid}/subject-marker")
+def subject_marker(sid: str):
+    """Earliest-frame pixel-space bbox for the subject/opponent track, so the
+    UI can show a persistent "who are we tracking" overlay on frame0.jpg.
+    Returns 200 with nulls (not 404) when tracking data isn't available yet —
+    a 404 here would trip the frontend's blanket demo-mode fallback."""
+    sdir = _sdir(sid)
+    m = _load_json(sdir, "metrics.json")
+    tp = sdir / "tracks.parquet"
+    empty = {"subject": None, "partner": None, "opponent": None, "opponents": []}
+    if not tp.exists() or not m:
+        return empty
+
+    import pandas as pd
+    tracks = pd.read_parquet(tp)
+
+    def _box(tid):
+        if tid is None:
+            return None
+        rows = tracks[tracks["track_id"] == tid]
+        if rows.empty:
+            return None
+        row = rows.loc[rows["frame"].idxmin()]
+        return {"frame": int(row["frame"]), "x1": float(row["x1"]), "y1": float(row["y1"]),
+                "x2": float(row["x2"]), "y2": float(row["y2"])}
+
+    opponent_ids = m.get("opponent_track_ids") or (
+        [m["opponent_track_id"]] if m.get("opponent_track_id") is not None else [])
+    return {"subject": _box(m.get("subject_track_id")),
+            "partner": _box(m.get("partner_track_id")),
+            "opponent": _box(m.get("opponent_track_id")),  # back-compat single box
+            "opponents": [_box(tid) for tid in opponent_ids]}
+
+
 def _calibratable(status: dict) -> bool:
     """Calibration allowed once ingest finished — including re-calibration of
     completed or failed sessions. Compare fields, not whole dicts (status also
@@ -295,6 +549,9 @@ def calibrate(sid: str, cal: Calibration):
     sdir = _sdir(sid)
     if not _calibratable(get_status(sdir)):
         raise HTTPException(409, "session not ready for calibration")
+    meta = _load_json(sdir, "meta.json")
+    if meta.get("match_type") == "doubles" and cal.partner_px is None:
+        raise HTTPException(400, "doubles sessions require partner_px")
     pipeline.clear_derived(sdir)  # keep tracks/ball parquets: pixel-space, reusable
     (sdir / "calibration.json").write_text(cal.model_dump_json())
     pipeline.enqueue_analyze(sdir)
