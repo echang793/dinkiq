@@ -1,6 +1,9 @@
 """DinkIQ — FastAPI server: upload, calibrate, process, results, SPA."""
 
+import base64
 import json
+import os
+import secrets
 import shutil
 import threading
 import uuid
@@ -8,7 +11,7 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 import pipeline
@@ -19,6 +22,34 @@ STATIC = ROOT / "static"
 ALLOWED_EXT = {".mp4", ".mov", ".m4v"}
 
 app = FastAPI(title="DinkIQ")
+
+# ── Optional HTTP Basic Auth for remote access (e.g. via Tailscale Funnel) ──
+# Set DINKIQ_PASSWORD=somepassword. Localhost bypasses auth regardless — this
+# mirrors vantage_ufc/src/pwa_server.py's pattern. Checked via the Host header
+# (not client IP), since a Funnel-proxied request still arrives locally but
+# carries the public hostname in Host.
+_DINKIQ_PASSWORD = os.environ.get("DINKIQ_PASSWORD", "").strip() or None
+_DINKIQ_PASSWORD_BYTES = _DINKIQ_PASSWORD.encode() if _DINKIQ_PASSWORD else None
+
+
+@app.middleware("http")
+async def _basic_auth(request, call_next):
+    if _DINKIQ_PASSWORD_BYTES is None:
+        return await call_next(request)
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if host in ("127.0.0.1", "localhost", ""):
+        return await call_next(request)
+    auth_header = request.headers.get("authorization", "")
+    if auth_header.startswith("Basic "):
+        try:
+            decoded = base64.b64decode(auth_header[6:]).split(b":", 1)
+            provided = decoded[1] if len(decoded) == 2 else b""
+            if secrets.compare_digest(provided, _DINKIQ_PASSWORD_BYTES):
+                return await call_next(request)
+        except Exception:
+            pass
+    return PlainTextResponse("Unauthorized", status_code=401,
+                             headers={"WWW-Authenticate": 'Basic realm="DinkIQ"'})
 
 
 class Calibration(BaseModel):

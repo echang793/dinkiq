@@ -22,6 +22,25 @@ YOLO weights auto-download to `models/` on first run (yolov8n-pose).
 `static/dashboard.html` is the reference UI: upload a clip, click 4 court corners +
 4 kitchen corners + yourself, watch the progress bar, read the results.
 
+## Share with friends
+
+No real cloud "free tier" can run the torch + YOLO + ffmpeg pipeline (too little
+RAM, or GPU cost per hour). Free option: expose your own Mac via
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) — same pattern as the
+sibling `vantage_ufc/src/pwa_server.py`.
+
+```bash
+export DINKIQ_PASSWORD="something-only-you-and-friends-know"
+.venv/bin/python src/server.py     # keep running in one terminal
+tailscale funnel 8100              # in another terminal — prints the public https:// URL
+```
+
+- Your Mac has to stay awake and the server running for friends to reach it.
+- `DINKIQ_PASSWORD` gates everyone except localhost with an HTTP Basic Auth
+  prompt (any username, that password) — leave it unset for local-only use.
+- `tailscale funnel status` shows the current public URL; `tailscale funnel off`
+  stops sharing.
+
 ## Pipeline (per session, artifacts under `data/sessions/<id>/`)
 
 | Stage | Module | Artifact | Notes |
