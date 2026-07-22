@@ -18,6 +18,12 @@ COURT_L = 44.0
 NET_Y = 22.0
 NVZ_DEPTH = 7.0  # kitchen line is 7 ft from the net on each side
 
+# shared by points.py (in/out call) and shots.py (serve/landing lookup) so
+# the two stages agree on which bounce belongs to which hit — they used to
+# drift (2.0s vs 2.5s), which could make a shot plot as clearly out on the
+# shot map while points.py reported no unforced error for the same rally
+BOUNCE_LOOKUP_WINDOW_S = 2.5
+
 # Court-space targets for the four clicked corners (same click order as docstring):
 # far-left=(0,0), far-right=(20,0), near-right=(20,44), near-left=(0,44)
 CORNER_TARGETS = np.array(

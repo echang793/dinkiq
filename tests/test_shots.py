@@ -144,12 +144,54 @@ def test_shot_report_with_hitters_adds_opponent_shots():
     assert rep["opponent_shots"] == {"shots_tracked": 0}
 
 
+def test_serve_depth_rejects_implausible_bounce():
+    # a single-frame glitch bounce (y=300 -- nowhere near the court, which
+    # only runs 0-44ft) must not be reported as a real serve landing
+    rallies = [{"start": 1.0, "end": 3.0, "hits": 3, "duration": 2.0}]
+    hits = np.array([1.0, 2.0, 3.0])
+    mine = np.array([True, False, True])
+    bounces = pd.DataFrame({"x": [10.0], "y": [300.0], "t": [1.4]})
+    m = serve_metrics(rallies, mine, hits, bounces)
+    assert m == {"serves_measured": 0}
+
+
+def test_serve_depth_picks_plausible_bounce_over_glitch():
+    # a glitch bounce earlier in the window must not shadow the real one
+    rallies = [{"start": 1.0, "end": 3.0, "hits": 3, "duration": 2.0}]
+    hits = np.array([1.0, 2.0, 3.0])
+    mine = np.array([True, False, True])
+    bounces = pd.DataFrame({"x": [10.0, 10.0], "y": [-200.0, 40.0], "t": [1.1, 1.4]})
+    m = serve_metrics(rallies, mine, hits, bounces)
+    assert m["serves_measured"] == 1
+    assert m["avg_serve_depth_from_baseline_ft"] == 4.0
+
+
+def test_opponent_shot_landings_rejects_implausible_bounce():
+    hit_times = np.array([1.0])
+    hitters = ["opponent1"]
+    bounces = pd.DataFrame({"x": [5.0], "y": [-500.0], "t": [1.3]})
+    assert opponent_shot_landings(hit_times, hitters, bounces, "opponent1") == []
+
+
+def test_opponent_shot_report_combines_opponent1_and_opponent2():
+    hit_times = np.array([1.0, 2.0])
+    hitters = ["opponent1", "opponent2"]
+    bounces = pd.DataFrame({"x": [5.0, 15.0], "y": [10.0, 30.0], "t": [1.3, 2.3]})
+    rep = opponent_shot_report(hit_times, hitters, bounces)
+    assert rep["shots_tracked"] == 2
+    assert rep["side_counts"] == {"left": 1, "right": 1}
+
+
 if __name__ == "__main__":
     for fn in [test_classify_rules, test_ball_speed_at, test_low_coverage_degrades,
                test_serve_depth, test_serve_placement_recorded, test_serve_side_thirds,
                test_subject_pos_at, test_shot_report_includes_position_when_available,
                test_mph_from_norm, test_shot_report_includes_mph,
                test_opponent_shot_landings_and_report, test_opponent_shot_report_empty_when_no_hits,
-               test_shot_report_with_hitters_adds_opponent_shots]:
+               test_shot_report_with_hitters_adds_opponent_shots,
+               test_serve_depth_rejects_implausible_bounce,
+               test_serve_depth_picks_plausible_bounce_over_glitch,
+               test_opponent_shot_landings_rejects_implausible_bounce,
+               test_opponent_shot_report_combines_opponent1_and_opponent2]:
         fn()
         print(f"ok {fn.__name__}")

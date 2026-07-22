@@ -11,7 +11,7 @@ session reports pose/audio metrics only.
 import numpy as np
 import pandas as pd
 
-from court import COURT_L, COURT_W, NET_Y, dist_from_net
+from court import BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, dist_from_net, on_court
 
 MIN_COVERAGE = 0.15    # below this, ball track too sparse to classify anything
 HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
@@ -19,6 +19,13 @@ HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
 DRIVE_SPEED = 1.8
 DINK_SPEED = 0.7
 FT_S_PER_MPH = 1.46667  # 5280/3600
+# how far past the court boundary a bounce can plausibly be and still be a
+# real shot landing (as opposed to a glare/reflection/spectator misdetection
+# the classical ball detector locked onto for one frame). Much wider than
+# points.py's OUT_MARGIN=0.5, which calls a REAL close out — this just
+# rejects bounces so far off-court they can't be a real shot at all, before
+# depth/placement math ever sees them (same reasoning as MAX_PLAUSIBLE_MPH)
+PLAUSIBLE_BOUNCE_MARGIN = 15.0
 # fastest verified competitive paddle-sport shots sit well under this; a
 # classical motion-blob ball detector occasionally locks onto a false
 # positive for one frame, producing a huge apparent px/frame jump — treat
@@ -88,6 +95,21 @@ def serve_side(x: float) -> str:
     return "middle"
 
 
+def _first_plausible_bounce(candidates: pd.DataFrame) -> pd.Series | None:
+    """Earliest bounce in a window that's at least within plausible range of
+    the court — filters out single-frame glare/reflection/spectator
+    misdetections before they're reported as a real shot landing. Wider
+    than the strict in/out margin points.py uses, since a bounce can be a
+    real (if generously-called) out without being a detection glitch."""
+    if not len(candidates):
+        return None
+    ok = candidates[[on_court(x, y, margin=PLAUSIBLE_BOUNCE_MARGIN)
+                     for x, y in zip(candidates["x"], candidates["y"])]]
+    if not len(ok):
+        return None
+    return ok.sort_values("t").iloc[0]
+
+
 def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
                   hit_times: np.ndarray, bounces_court: pd.DataFrame) -> dict:
     """Serve depth + placement from the first bounce after a subject serve.
@@ -102,10 +124,10 @@ def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
         if not subject_hits[idx]:
             continue  # not the subject's serve
         b = bounces_court[(bounces_court["t"] > r["start"]) &
-                          (bounces_court["t"] < r["start"] + 2.5)]
-        if not len(b):
+                          (bounces_court["t"] < r["start"] + BOUNCE_LOOKUP_WINDOW_S)]
+        first = _first_plausible_bounce(b)
+        if first is None:
             continue
-        first = b.sort_values("t").iloc[0]
         # depth relative to whichever baseline the serve travels toward
         baseline_y = 0.0 if first["y"] < NET_Y else COURT_L
         depth = round(float(abs(baseline_y - first["y"])), 1)
@@ -129,18 +151,19 @@ def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
 
 def opponent_shot_landings(hit_times: np.ndarray, hitters: list[str],
                            bounces_court: pd.DataFrame, label: str = "opponent1") -> list[dict]:
-    """Where a given opponent's shots landed, from the first tracked bounce
-    after each of their hits — same lookup pattern as serve_metrics, just
-    keyed off the general hitter attribution instead of rally starts."""
+    """Where a given opponent's shots landed, from the first plausible
+    tracked bounce after each of their hits — same lookup pattern as
+    serve_metrics, just keyed off the general hitter attribution instead of
+    rally starts."""
     landings = []
     for i, h in enumerate(hitters):
         if h != label:
             continue
         t0 = float(hit_times[i])
-        b = bounces_court[(bounces_court["t"] > t0) & (bounces_court["t"] < t0 + 2.5)]
-        if not len(b):
+        b = bounces_court[(bounces_court["t"] > t0) & (bounces_court["t"] < t0 + BOUNCE_LOOKUP_WINDOW_S)]
+        first = _first_plausible_bounce(b)
+        if first is None:
             continue
-        first = b.sort_values("t").iloc[0]
         landings.append({"t": round(t0, 2), "x": round(float(first["x"]), 1),
                          "y": round(float(first["y"]), 1), "side": serve_side(float(first["x"]))})
     return landings
@@ -148,7 +171,14 @@ def opponent_shot_landings(hit_times: np.ndarray, hitters: list[str],
 
 def opponent_shot_report(hit_times: np.ndarray, hitters: list[str],
                          bounces_court: pd.DataFrame) -> dict:
-    landings = opponent_shot_landings(hit_times, hitters, bounces_court, "opponent1")
+    """Landing tendency for every opponent seen in `hitters` (opponent1 in
+    singles; opponent1 AND opponent2 in doubles — both counted toward one
+    combined report, since the app tracks a single opponent name per
+    session rather than per-doubles-player)."""
+    labels = sorted({h for h in hitters if h.startswith("opponent")})
+    landings = []
+    for label in labels:
+        landings += opponent_shot_landings(hit_times, hitters, bounces_court, label)
     if not landings:
         return {"shots_tracked": 0}
     sides: dict[str, int] = {}

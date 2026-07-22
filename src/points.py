@@ -11,10 +11,10 @@ Heuristic, gated by available signal:
 
 import numpy as np
 
-from court import on_court
+from court import BOUNCE_LOOKUP_WINDOW_S, on_court
 
 OUT_MARGIN = 0.5  # ft tolerance around the boundary when calling a bounce "out"
-BOUNCE_WINDOW_S = 2.0
+BOUNCE_WINDOW_S = BOUNCE_LOOKUP_WINDOW_S
 MATCH_WINDOW_S = 0.25
 
 

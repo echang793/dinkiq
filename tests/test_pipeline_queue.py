@@ -1,5 +1,6 @@
 """Analysis queue position tracking + friendly ingest error mapping."""
 
+import json
 import sys
 import threading
 import time
@@ -7,7 +8,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import numpy as np
+import pandas as pd
+
 import pipeline
+
+TRACK_COLUMNS = ["frame", "track_id", "x1", "y1", "x2", "y2", "conf", "lwx", "lwy", "rwx", "rwy"]
+
+
+def test_events_uses_real_video_duration_not_tracked_frames(tmp_path, monkeypatch):
+    """play_time_pct used to divide by the last TRACKED frame's timestamp,
+    which under-reports true length whenever players go undetected near the
+    end of a clip while a rally is still audible -- and could push the
+    percentage above 100%. It should use the real (ffprobe) video duration
+    instead, which analyze() already has on hand."""
+    monkeypatch.setattr(pipeline, "_run", lambda cmd: None)  # skip real ffmpeg clip cuts
+    tracks = pd.DataFrame(columns=TRACK_COLUMNS)  # empty -> old tracked-frame duration was 0.0
+    hit_times = np.array([1.0, 1.3, 1.6])  # one rally of 3 hits, 0.6s long
+    pipeline.events(tmp_path, tracks, subject=1, partner=None, opponents=[],
+                    hit_times=hit_times, video_duration=100.0)
+    ev = json.loads((tmp_path / "events.json").read_text())
+    assert ev["rally_count"] == 1
+    # old code: video_duration falsy fallback (0.0) -> play_time_pct forced to 0.0 always
+    assert ev["play_time_pct"] == 0.6
 
 
 def test_queue_position_reflects_order(monkeypatch, tmp_path):

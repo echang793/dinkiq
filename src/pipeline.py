@@ -277,7 +277,8 @@ def _player_swings(tracks: pd.DataFrame, track_id: int | None) -> np.ndarray:
 
 
 def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
-          opponents: list[int], hit_times: np.ndarray | None = None):
+          opponents: list[int], hit_times: np.ndarray | None = None,
+          video_duration: float | None = None):
     """M2: paddle hits from audio, rallies, swings, per-rally clips.
 
     Degrades gracefully: no/quiet audio -> events.json records zero rallies.
@@ -288,9 +289,16 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     the points stage; team_hits is True for any hit attributed to subject OR
     partner (used for "my team's shots" downstream, identical to
     subject-only in singles since partner is always None there).
+
+    `video_duration` should be the real ffprobe duration — used as the
+    play_time_pct denominator. Falls back to the last tracked frame only
+    when the caller doesn't have it (e.g. tests): that fallback can
+    under-report true length (players undetected near the end while a
+    rally is still audible), which used to let play_time_pct exceed 100%.
     """
     audio = sdir / "audio.wav"
-    duration = float(tracks["frame"].max() + 1) / FPS if len(tracks) else 0.0
+    duration = video_duration if video_duration else (
+        float(tracks["frame"].max() + 1) / FPS if len(tracks) else 0.0)
     if hit_times is None:
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
 
@@ -484,7 +492,8 @@ def analyze(sdir: Path) -> None:
         set_status(sdir, "events", "running")
         audio_thread.join(timeout=120)
         hit_times, team_hits, rallies, hitters = events(
-            sdir, tracks, subject, partner, opponents, hit_times=audio_result.get("hits"))
+            sdir, tracks, subject, partner, opponents, hit_times=audio_result.get("hits"),
+            video_duration=info["duration"])
 
         set_status(sdir, "shots", "running")
         bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,

@@ -433,25 +433,25 @@
 </head>
 <body>
 <div class="top">
-  <div class="logo" onclick="goHome()">
+  <div class="logo" onclick="goHome()" tabindex="0" role="button" aria-label="Home">
     <span class="bug">DI</span>
     <b>DINK<i>IQ</i></b>
   </div>
   <span class="livechip"><i class="reddot"></i>LIVE ANALYSIS</span>
   <div class="sp"></div>
   <div class="navlist">
-    <span class="here" id="navFilm" onclick="goHome()">Film Room</span>
-    <span id="navSessions" onclick="goSessions()">Sessions</span>
-    <span id="navTrends" onclick="goTrends()">Trends</span>
+    <span class="here" id="navFilm" onclick="goHome()" tabindex="0" role="button">Film Room</span>
+    <span id="navSessions" onclick="goSessions()" tabindex="0" role="button">Sessions</span>
+    <span id="navTrends" onclick="goTrends()" tabindex="0" role="button">Trends</span>
   </div>
-  <span class="kbd" onclick="openPal()" title="Command palette (Cmd/Ctrl K)">⌘K</span>
+  <span class="kbd" onclick="openPal()" tabindex="0" role="button" title="Command palette (Cmd/Ctrl K)">⌘K</span>
   <div class="skins">
     <button class="skinbtn on" data-k="night" style="background:linear-gradient(135deg,#f5c542 50%,#0d1830 50%)" onclick="setSkin('night',event)" aria-label="Night Game skin" title="Night Game"></button>
     <button class="skinbtn" data-k="champ" style="background:linear-gradient(135deg,#ffd24d 50%,#181307 50%)" onclick="setSkin('champ',event)" aria-label="Championship skin" title="Championship"></button>
     <button class="skinbtn" data-k="clay" style="background:linear-gradient(135deg,#ff8a5c 50%,#22110c 50%)" onclick="setSkin('clay',event)" aria-label="Clay Court skin" title="Clay Court"></button>
     <button class="skinbtn" data-k="prime" style="background:linear-gradient(135deg,#39d5ff 50%,#0b1930 50%)" onclick="setSkin('prime',event)" aria-label="Prime Time skin" title="Prime Time"></button>
   </div>
-  <span class="chip demo" id="demoChip">demo data · backend offline</span>
+  <span class="chip demo" id="demoChip" onclick="retryBackend()" title="Showing sample data — can't reach the server. Retrying automatically; click to retry now." style="cursor:pointer">sample data · reconnecting…</span>
 </div>
 
 <div class="ribbon" id="ribbon"><div class="ribtrack" id="ribtrack"></div></div>
@@ -480,7 +480,7 @@
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <h2 style="margin:0">Recent sessions</h2>
-            <span class="link" onclick="goSessions()">Manage all →</span>
+            <span class="link" onclick="goSessions()" tabindex="0" role="button">Manage all →</span>
           </div>
           <div id="sessList" style="margin-top:14px"><div class="empty">No sessions yet — upload your first match above.</div></div>
         </div>
@@ -489,11 +489,11 @@
         <div class="card">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <h2 style="margin:0">Progress over time</h2>
-            <span class="link" onclick="goTrends()">View trends →</span>
+            <span class="link" onclick="goTrends()" tabindex="0" role="button">View trends →</span>
           </div>
           <div id="trendWrap" style="margin-top:14px"><div class="empty">Complete a session to start your trend line.</div></div>
         </div>
-        <div class="card" id="covCard" style="cursor:pointer" onclick="openCoverage()">
+        <div class="card" id="covCard" style="cursor:pointer" onclick="openCoverage()" tabindex="0" role="button">
           <div style="display:flex;justify-content:space-between;align-items:center">
             <h2 style="margin:0">Latest court coverage</h2>
             <span class="link">Full breakdown →</span>
@@ -508,7 +508,7 @@
   </section>
 
   <section class="screen" id="calib">
-    <span class="back" onclick="goHome()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
+    <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
     <div class="card">
       <h2>Calibrate the court</h2>
       <div class="steps" id="calSteps"></div>
@@ -528,7 +528,7 @@
   </section>
 
   <section class="screen" id="proc">
-    <span class="back" onclick="goHome()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions (keeps running)</span>
+    <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions (keeps running)</span>
     <div class="card">
       <h2>Analyzing your match</h2>
       <div class="procwrap">
@@ -546,12 +546,12 @@
 
   <section class="screen" id="results">
     <div class="rhead">
-      <span class="back" onclick="goHome()" style="margin:0"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
+      <span class="back" onclick="goHome()" style="margin:0" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
       <div style="display:flex;flex-wrap:wrap;gap:9px">
         <button class="ghost sm" onclick="downloadReport()">Download report (PDF)</button>
         <button class="ghost sm" onclick="downloadHighlights()">Download highlights</button>
         <button class="ghost sm" onclick="downloadStatCard()">Share stat card</button>
-        <button class="ghost sm" onclick="startCalib()">Recalibrate</button>
+        <button class="ghost sm" onclick="startCalib(lastSession && lastSession.meta && lastSession.meta.match_type)">Recalibrate</button>
         <button class="ghost sm" onclick="reanalyze()">Re-analyze</button>
       </div>
     </div>
@@ -579,9 +579,9 @@
     <div class="card">
       <h2>Session info</h2>
       <div class="metafields">
-        <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" style="width:220px"></div>
-        <div class="fld"><label>Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" style="width:160px"></div>
-        <div class="fld"><label>Opponent</label><input id="mOpponent" placeholder="e.g. Sam" style="width:160px" onchange="loadHeadToHead()"></div>
+        <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" maxlength="120" style="width:220px"></div>
+        <div class="fld"><label>Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" maxlength="80" style="width:160px"></div>
+        <div class="fld"><label>Opponent</label><input id="mOpponent" placeholder="e.g. Sam" maxlength="80" style="width:160px" onchange="loadHeadToHead()"></div>
         <div class="fld"><label>Played on</label><input id="mDate" type="date"></div>
         <div class="fld"><label>Known DUPR</label><input id="mDupr" type="number" step="0.05" min="2" max="8" style="width:120px"></div>
         <div class="fld"><label>Context</label>
@@ -595,7 +595,7 @@
         <button class="ghost sm" onclick="saveMeta()">Save</button>
         <span class="saved" id="mSaved">saved ✓</span>
       </div>
-      <div class="fld" style="margin-top:10px"><label>Notes</label><textarea id="mNotes" rows="3" placeholder="what worked, what to fix next time…" style="width:100%;resize:vertical"></textarea></div>
+      <div class="fld" style="margin-top:10px"><label>Notes</label><textarea id="mNotes" rows="3" placeholder="what worked, what to fix next time…" maxlength="500" style="width:100%;resize:vertical"></textarea></div>
       <div class="metafields" style="margin-top:10px">
         <input type="file" id="mReuploadFile" accept="video/mp4,video/quicktime,video/x-m4v" style="display:none" onchange="doReupload()">
         <button class="ghost sm" onclick="$('mReuploadFile').click()">Replace video…</button>
@@ -691,7 +691,7 @@
   </section>
 
   <section class="screen" id="compare">
-    <span class="back" onclick="goSessions()"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
+    <span class="back" onclick="goSessions()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
     <div class="pagehead"><div><h1 class="ptitle">Compare sessions</h1><p class="psub">Side-by-side, with the change from A to B.</p></div></div>
     <div class="card"><div id="cmpBody"><div class="empty">Pick two sessions to compare.</div></div></div>
     <div class="card" id="clipCmpCard" style="display:none">
@@ -761,7 +761,22 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let sid = null, pollTimer = null, DEMO = false;
+// must match dupr.py's BAND_MIN/BAND_MAX — every band the backend can ever
+// output is clamped to this range, so the gauge/bars/radar all scale to it
+// instead of a generic 2-8 DUPR scale (which would make a perfect 5.0 score,
+// the tool's actual ceiling, look like a middling ~3.5 on an 8-point axis)
+const DUPR_BAND_MIN = 2.5, DUPR_BAND_MAX = 5.0;
+const DUPR_BAND_SPAN = DUPR_BAND_MAX - DUPR_BAND_MIN;
 let lastSession = null;
+// keyboard-only users otherwise can't activate the many span/div "buttons"
+// (nav, back links, card shortcuts) — delegate Enter/Space to a click()
+document.addEventListener('keydown', e => {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.getAttribute &&
+      e.target.getAttribute('role') === 'button' && e.target.tagName !== 'BUTTON') {
+    e.preventDefault();
+    e.target.click();
+  }
+});
 const SKINS = {
   night: { hi:'245,197,66', mid:'235,180,85', lo:'130,105,55' },
   champ: { hi:'255,210,77', mid:'240,195,95', lo:'135,110,55' },
@@ -790,11 +805,19 @@ function setSkin(k, ev){
 }
 
 /* ---------------- API with demo fallback ---------------- */
+// A 404 here only means "no FastAPI backend at all" when it comes from one
+// of these boot-time index calls (e.g. this file served statically with no
+// /api/* routes behind it at all). A 404 from any OTHER endpoint is a
+// normal per-resource "not found" (deleted session, no scouting data yet,
+// etc.) and must NOT flip the whole app into demo/fake-data mode — every
+// other call already has its own try/catch that degrades that one widget.
+const DEMO_PROBE_PATHS = ['/sessions', '/progress'];
 async function api(p, opt) {
   if (DEMO) return mockApi(p, opt);
   try {
     const r = await fetch('/api' + p, opt);
-    if (r.status === 404 && !DEMO) { enableDemo(); return mockApi(p, opt); }
+    const isProbe = DEMO_PROBE_PATHS.some(probe => p === probe || p.startsWith(probe + '?'));
+    if (r.status === 404 && !DEMO && isProbe) { enableDemo(); return mockApi(p, opt); }
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw (e.detail || ('HTTP ' + r.status)); }
     return r.json();
   } catch (e) {
@@ -803,7 +826,24 @@ async function api(p, opt) {
   }
 }
 function frameURL() { return DEMO ? demoFrameURL() : '/api/session/' + sid + '/frame?ts=' + Date.now(); }
-function enableDemo(){ if (DEMO) return; DEMO = true; $('demoChip').style.display = 'inline-block'; setTimeout(() => { try { loadSessions(); } catch(e){} try { loadTrend(); } catch(e){} }, 0); }
+let demoRetryTimer = null;
+function enableDemo(){
+  if (DEMO) return;
+  DEMO = true;
+  $('demoChip').style.display = 'inline-block';
+  setTimeout(() => { try { loadSessions(); } catch(e){} try { loadTrend(); } catch(e){} }, 0);
+  // a single dropped request shouldn't trap the tab in fake data forever —
+  // keep checking, and reload (a clean DEMO=false) the moment the server answers
+  if (!demoRetryTimer) demoRetryTimer = setInterval(() => {
+    fetch('/api/sessions').then(r => { if (r.ok) location.reload(); }).catch(() => {});
+  }, 5000);
+}
+function retryBackend() {
+  fetch('/api/sessions').then(r => {
+    if (r.ok) location.reload();
+    else toast("Still can't reach the server — will keep retrying");
+  }).catch(() => toast("Still can't reach the server — will keep retrying"));
+}
 
 function toast(msg, err) {
   const t = $('toast'); t.textContent = msg; t.className = 'toast on' + (err ? ' err' : '');
@@ -988,10 +1028,10 @@ const CAL_STEPS_BASE = [
   { chip:'C2', cls:'', title:'Far-right court corner', sub:'Baseline × right sideline, far side. Off-frame estimates in the border are fine.' },
   { chip:'C3', cls:'', title:'Near-right court corner', sub:'The corner closest to the camera, right side.' },
   { chip:'C4', cls:'', title:'Near-left court corner', sub:'The corner closest to the camera, left side.' },
-  { chip:'K1', cls:'k', title:'Far-left kitchen corner', sub:'Where the far NVZ line meets the left sideline. Kitchen points anchor the whole calibration — be precise, must be in frame.' },
-  { chip:'K2', cls:'k', title:'Far-right kitchen corner', sub:'Far NVZ line × right sideline.' },
-  { chip:'K3', cls:'k', title:'Near-right kitchen corner', sub:'Near NVZ line × right sideline.' },
-  { chip:'K4', cls:'k', title:'Near-left kitchen corner', sub:'Near NVZ line × left sideline.' },
+  { chip:'K1', cls:'k', title:'Far-left kitchen corner', sub:'Where the far kitchen line meets the left sideline. Kitchen points anchor the whole calibration — be precise, must be in frame.' },
+  { chip:'K2', cls:'k', title:'Far-right kitchen corner', sub:'Far kitchen line × right sideline.' },
+  { chip:'K3', cls:'k', title:'Near-right kitchen corner', sub:'Near kitchen line × right sideline.' },
+  { chip:'K4', cls:'k', title:'Near-left kitchen corner', sub:'Near kitchen line × left sideline.' },
   { chip:'YOU', cls:'me', title:'Click yourself', sub:'Click your body so the coach knows which player to follow.' },
 ];
 const CAL_STEP_PARTNER = { chip:'P', cls:'partner', title:'Click your partner', sub:'Click your partner\'s body so we know who\'s on your team.' };
@@ -1000,7 +1040,14 @@ const PADF = 0.25;
 let calClicks = [], calImg = null, padX = 0, padY = 0;
 
 let lastCalibration = null;
-function startCalib() {
+function startCalib(mt) {
+  // matchType is a page-global set by the upload form's Singles/Doubles
+  // toggle — correct right after a fresh upload, but stale (or never set)
+  // when calibration is reached any other way (opening an existing
+  // pending session, Recalibrate). Callers with the session's real
+  // meta.match_type in hand should pass it so the right calibration steps
+  // (partner click, for doubles) actually render.
+  if (mt) setMatchType(mt);
   clearInterval(pollTimer);
   show('calib'); calClicks = [];
   calImg = new Image();
@@ -1200,9 +1247,10 @@ function renderDupr(d) {
   body.innerHTML =
     '<div class="heroflex">' +
       '<div class="duprnum" id="duprNum"><small>~</small>2.00</div>' +
-      '<div class="resemble">Your play <b>resembles a ~' + d.band.toFixed(2).replace(/0$/,'') + ' DUPR player</b>. This is a video-based pattern match, not a certified rating.</div>' +
+      '<div class="resemble">Your play <b>resembles a ~' + d.band.toFixed(2).replace(/0$/,'') + ' DUPR player</b>. This is a video-based pattern match, not a certified rating.' +
+        '<br><span class="mut" style="font-size:11.5px">DUPR is pickleball\'s standard skill rating, roughly 2.0 (brand new) to 8.0 (pro) — this tool can currently distinguish play up to about a 5.0.</span></div>' +
       '<div class="scale"><div class="rail"></div>' +
-        [2,3,4,5,6,7,8].map(t => '<span class="tick" style="left:' + ((t-2)/6*100) + '%">' + t + '.0</span>').join('') +
+        [2.5,3.0,3.5,4.0,4.5,5.0].map(t => '<span class="tick" style="left:' + ((t-DUPR_BAND_MIN)/DUPR_BAND_SPAN*100) + '%">' + t.toFixed(1) + '</span>').join('') +
         '<div class="mk" id="duprMk"></div></div>' +
       '<div class="conf"><svg width="62" height="62" viewBox="0 0 62 62">' +
         '<circle cx="31" cy="31" r="' + R + '" fill="none" style="stroke:var(--panel2)" stroke-width="6"/>' +
@@ -1214,7 +1262,7 @@ function renderDupr(d) {
     '<div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-top:22px">' + radarSVG(d.dimensions) +
     '<div class="bars" id="duprDims" style="flex:1;min-width:250px">' +
       Object.values(d.dimensions || {}).sort((a,b) => a.band - b.band).map(dim => {
-        const pct = Math.max(4, Math.min(100, 100 * (dim.band - 2) / 6));
+        const pct = Math.max(4, Math.min(100, 100 * (dim.band - DUPR_BAND_MIN) / DUPR_BAND_SPAN));
         const col = dim.band < d.band - .25 ? 'var(--amber)' : 'var(--accent)';
         return '<div class="bar"><span class="lb">' + esc(dim.label) + '</span>' +
           '<div class="track"><div class="fill" data-w="' + pct + '%" style="background:' + col + '"></div></div>' +
@@ -1222,7 +1270,7 @@ function renderDupr(d) {
       }).join('') + '</div></div>' +
     (d.caveats && d.caveats.length ? d.caveats.map(c => '<div class="caveat">' + warnSVG + '<span>' + esc(c) + '</span></div>').join('') : '');
   // the reveal: count up + marker slide + ring draw
-  const numEl = $('duprNum'), t0 = performance.now(), DUR = 1700, from = 2, to = d.band;
+  const numEl = $('duprNum'), t0 = performance.now(), DUR = 1700, from = DUPR_BAND_MIN, to = d.band;
   const ease = t => 1 - Math.pow(1 - t, 3);
   (function stepFn(now) {
     const t = Math.min(1, (now - t0) / DUR);
@@ -1232,7 +1280,7 @@ function renderDupr(d) {
     else { numEl.style.transition = 'transform .3s cubic-bezier(.34,1.56,.64,1)'; numEl.style.transform = 'scale(1.06)'; setTimeout(() => { numEl.style.transform = ''; }, 300); }
   })(t0);
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    $('duprMk').style.left = ((to - 2) / 6 * 100) + '%';
+    $('duprMk').style.left = ((to - DUPR_BAND_MIN) / DUPR_BAND_SPAN * 100) + '%';
     $('confRing').style.strokeDashoffset = CIRC * (1 - d.confidence);
   }));
   if (isHigh) setTimeout(celebrate, 900);
@@ -1329,7 +1377,7 @@ function renderPoints(pt, ev) {
       return '<div class="orow"><span class="oidx">' + String(i+1).padStart(2,'0') + '</span>' +
         '<span class="oinfo">' + (ev2 ? ev2.hits + ' hits' : 'rally ' + (i+1)) +
         (o.server && o.server !== 'unknown' ? ' · ' + (isMyTeam(o.server) ? playerName(o.server) + ' served' : 'opp. served') : '') + '</span>' +
-        (o.unforced_error ? '<span class="wbadge ue">UE</span>' : '') + badge(o) +
+        (o.unforced_error ? '<span class="wbadge ue" title="Unforced error">UE</span>' : '') + badge(o) +
         (o.corrected ? '<span class="wbadge" style="background:var(--dim)">fixed</span>' : '') + fixBtns(i) + '</div>';
     }).join('') + '</div>';
   }
@@ -1373,7 +1421,7 @@ function renderShots(sh) {
   const cols = { drive:'var(--accent)', dink:'var(--accent2)', drop:'var(--accent3)', medium:'var(--amber)', unknown:'var(--faint)' };
   $('shotMix').innerHTML = order.filter(k => mix[k]).map(k => {
     const pct = total ? Math.round(100 * mix[k] / total) : 0;
-    return '<div class="bar"><span class="lb">' + k + '</span>' +
+    return '<div class="bar"><span class="lb">' + SHOT_TYPE_LABELS[k] + '</span>' +
       '<div class="track"><div class="fill" data-w="' + pct + '%" style="background:' + cols[k] + '"></div></div>' +
       '<span class="val">' + mix[k] + '</span></div>';
   }).join('');
@@ -1404,6 +1452,7 @@ function renderShots(sh) {
   }
 }
 const SHOT_TYPE_COLORS = { drive: '#5b82e8', dink: '#39d5ff', drop: '#f0a63d', medium: '#8b6bf0', unknown: '#6b7280' };
+const SHOT_TYPE_LABELS = { drive:'Drive', dink:'Dink', drop:'Drop', medium:'Medium-paced', unknown:'Not classified' };
 function drawShotHeatmap(shots) {
   const c = $('shotHeatCanvas'), ctx = c.getContext('2d');
   const S = 8, P = 20, W = 20, L = 44;  // court feet: width x length
@@ -1430,7 +1479,7 @@ function drawShotHeatmap(shots) {
   $('shotHeatLegend').innerHTML = types.map(t =>
     '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">' +
     '<span style="width:9px;height:9px;border-radius:50%;background:' + (SHOT_TYPE_COLORS[t] || SHOT_TYPE_COLORS.unknown) + ';display:inline-block"></span>' +
-    esc(t) + '</span>').join('');
+    esc(SHOT_TYPE_LABELS[t] || t) + '</span>').join('');
 }
 
 async function loadSynergy() {
@@ -1669,13 +1718,20 @@ function fillMeta(meta) {
   loadHeadToHead();
 }
 async function saveMeta() {
-  const body = {};
-  if ($('mLabel').value) body.label = $('mLabel').value;
-  if ($('mPlayer').value) body.player = $('mPlayer').value;
-  if ($('mOpponent').value) body.opponent = $('mOpponent').value;
-  if ($('mDate').value) body.played_at = $('mDate').value;
+  // label/player/opponent/played_at/notes are sent unconditionally (even
+  // empty) so clearing a field back out actually clears it — the old
+  // truthy-guard meant an emptied input silently kept its previous saved
+  // value forever. known_dupr/context are left guarded: the backend can't
+  // yet tell "clear this" from "leave alone" for a number or a validated
+  // enum the way it can for plain text (empty string just stays valid text).
+  const body = {
+    label: $('mLabel').value,
+    player: $('mPlayer').value,
+    opponent: $('mOpponent').value,
+    played_at: $('mDate').value,
+    notes: $('mNotes').value,
+  };
   if ($('mDupr').value) body.known_dupr = parseFloat($('mDupr').value);
-  if ($('mNotes').value) body.notes = $('mNotes').value;
   if ($('mContext').value) body.context = $('mContext').value;
   try {
     await api('/session/' + sid + '/meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -1690,7 +1746,7 @@ async function loadHeadToHead() {
   let h;
   try { h = await api('/opponents/' + encodeURIComponent(name) + '/history'); }
   catch (e) { box.style.display = 'none'; return; }
-  if (!h || h.matches < 2) { box.style.display = 'none'; return; }  // 1 match = this session itself
+  if (!h || h.matches == null || h.matches < 2) { box.style.display = 'none'; return; }  // 1 match = this session itself
   box.style.display = 'block';
   let html = '<div class="caveat" style="display:flex">' +
     '<span>Head-to-head vs <b>' + esc(name) + '</b>: <b>' + h.wins + '-' + h.losses + '</b>' +
@@ -1709,12 +1765,19 @@ async function loadHeadToHead() {
 async function doReupload() {
   const f = $('mReuploadFile').files[0];
   if (!f || !sid) return;
+  const mt = lastSession && lastSession.meta && lastSession.meta.match_type;
   const fd = new FormData();
   fd.append('file', f);
   try {
     await api('/session/' + sid + '/reupload', { method: 'POST', body: fd });
     toast('Video replaced — reprocessing…');
-    openSession(sid);
+    // reupload only re-ingests (extracts frames), it doesn't re-analyze —
+    // that needs a fresh calibration, same as a brand-new upload. Waiting
+    // on stage==='done' here would hang forever since nothing advances
+    // the pipeline past ingest until calibration is submitted.
+    lastMsgStage = null;
+    show('proc'); renderProcSteps('ingest');
+    waitFor(s => s.stage === 'ingest' && s.state === 'done', () => startCalib(mt), 'Preparing video', true);
   } catch (e) { toast('Replace failed: ' + e, true); }
 }
 
@@ -1899,7 +1962,7 @@ async function openSession(id) {
   let s;
   try { s = await api('/session/' + id); } catch (e) { toast('Could not open session: ' + e, true); return; }
   if (s.stage === 'done' && s.metrics) showResults(s);
-  else if (s.stage === 'ingest' && s.state === 'done') startCalib();
+  else if (s.stage === 'ingest' && s.state === 'done') startCalib(s.meta && s.meta.match_type);
   else if (s.state === 'error') toast('Session failed: ' + (s.error || 'unknown'), true);
   else { lastMsgStage = null; show('proc'); renderProcSteps(s.stage); waitFor(x => x.stage === 'done', showResults, 'Analyzing'); }
 }
@@ -2093,12 +2156,16 @@ async function loadTrend() {
 function trendChart(pts) {
   const W = 640, H = 140, PX = 16, PY = 18;
   const bands = pts.map(p => p.dupr_band);
-  const lo = Math.min(...bands) - .25, hi = Math.max(...bands) + .25;
+  const known = pts.filter(p => p.known_dupr != null);
+  // scale to whichever is wider: video estimates cap around 5.0, but a
+  // user's real known DUPR can run well past that — without this, a known
+  // DUPR above the estimate range plots off-chart with no indication
+  const allVals = bands.concat(known.map(p => p.known_dupr));
+  const lo = Math.min(...allVals) - .25, hi = Math.max(...allVals) + .25;
   const x = i => PX + i * (W - 2*PX) / Math.max(1, pts.length - 1);
   const y = v => H - PY - (v - lo) / (hi - lo) * (H - 2*PY);
   const path = pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.dupr_band).toFixed(1)).join(' ');
   const area = path + ' L' + x(pts.length-1).toFixed(1) + ' ' + (H-4) + ' L' + PX + ' ' + (H-4) + ' Z';
-  const known = pts.filter(p => p.known_dupr != null);
   return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto;margin-top:10px" preserveAspectRatio="none">' +
     '<defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".18"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>' +
     '<path d="' + area + '" fill="url(#tg)" style="opacity:0;animation:figin .9s ease .6s forwards"/>' +
@@ -2294,21 +2361,49 @@ function mockRoute(p, method, opt) {
 }
 
 /* ---------------- data ribbon ---------------- */
-const RIBBON = [
-  ['Latest estimate', '~3.5 DUPR'],
-  ['Trend', '<span class="up">▲ 0.50</span> since June'],
-  ['Sessions analyzed', '3'],
-  ['Kitchen time', '31%'],
-  ['Longest rally', '19 hits'],
-  ['Deep serves', '64%'],
-  ['Distance last match', '1,204 ft'],
-  ['Court coverage', '64%'],
-];
-function buildRibbon(){
-  const group = RIBBON.map(([l, v]) =>
+async function buildRibbon(){
+  // Was a hardcoded constant shown to every user regardless of whether
+  // they'd ever uploaded a match — a brand-new account saw confident fake
+  // stats ("Sessions analyzed 3") about play that never happened. Pull the
+  // real numbers from the most recent completed session + cross-session
+  // progress instead, and show an honest empty state when there's none yet.
+  const t = $('ribtrack');
+  if (!t) return;
+  let items = null;
+  try {
+    const sessions = await api('/sessions');
+    const done = sessions.filter(s => s.stage === 'done');
+    const pts = await api('/progress');
+    if (done.length) {
+      const full = await api('/session/' + done[0].session_id);  // newest first
+      const m = full.metrics || {}, ev = full.events || {}, sh = full.shots || {}, dp = full.dupr || {};
+      const rated = pts.filter(p => p.dupr_band != null);
+      const delta = rated.length > 1 ? rated[rated.length - 1].dupr_band - rated[0].dupr_band : null;
+      items = [
+        ['Latest estimate', dp.available ? '~' + dp.band + ' DUPR' : '—'],
+      ];
+      if (delta != null) {
+        items.push(['Trend', '<span class="' + (delta >= 0 ? 'up' : 'dn') + '">' + (delta >= 0 ? '▲' : '▼') + ' ' +
+          Math.abs(delta).toFixed(2) + '</span> since first session']);
+      }
+      items.push(
+        ['Sessions analyzed', String(pts.length)],
+        ['Kitchen time', (m.zone_pct && m.zone_pct.kitchen != null) ? m.zone_pct.kitchen + '%' : '—'],
+        ['Longest rally', ev.max_rally_hits != null ? ev.max_rally_hits + ' hits' : '—'],
+        ['Deep serves', sh.deep_serve_pct != null ? sh.deep_serve_pct + '%' : '—'],
+        ['Distance last match', m.distance_ft != null ? Math.round(m.distance_ft).toLocaleString() + ' ft' : '—'],
+        ['Court coverage', m.coverage_pct != null ? m.coverage_pct + '%' : '—'],
+      );
+    }
+  } catch (e) { /* leave items null -> empty state below */ }
+  if (!items || !items.length) {
+    t.innerHTML = '<div class="ribitem"><span class="rlabel">Get started</span><span class="rval">Upload your first match to see your stats here</span></div>';
+    return;
+  }
+  const group = items.map(([l, v]) =>
     '<div class="ribitem"><span class="rlabel">' + l + '</span><span class="rval">' + v + '</span></div>' +
     '<div class="ribsep"><span class="dot"></span></div>').join('');
-  const t = $('ribtrack'); if (t) t.innerHTML = group + group;
+  t.innerHTML = group + group;
 }
 
 /* ---------------- radar chart ---------------- */
@@ -2320,7 +2415,7 @@ function radarSVG(dims) {
   const ringPts = f => ds.map((_, i) => pt(i, f).map(v => v.toFixed(1)).join(',')).join(' ');
   const rings = [.33, .66, 1].map((f, ri) => '<polygon class="ring" style="animation-delay:' + (ri * .12) + 's" points="' + ringPts(f) + '"/>').join('');
   const axes = ds.map((_, i) => { const p = pt(i, 1); return '<line class="axis" x1="' + C + '" y1="' + C + '" x2="' + p[0].toFixed(1) + '" y2="' + p[1].toFixed(1) + '"/>'; }).join('');
-  const val = d => Math.max(.12, Math.min(1, (d.band - 2) / 6));
+  const val = d => Math.max(.12, Math.min(1, (d.band - DUPR_BAND_MIN) / DUPR_BAND_SPAN));
   const poly = '<polygon class="poly" points="' + ds.map((d, i) => pt(i, val(d)).map(v => v.toFixed(1)).join(',')).join(' ') + '"/>';
   const dots = ds.map((d, i) => { const p = pt(i, val(d)); return '<circle class="pt" cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" style="animation-delay:' + (.6 + i * .08) + 's"/>'; }).join('');
   const labels = ds.map((d, i) => {
