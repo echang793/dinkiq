@@ -273,7 +273,8 @@ def progress():
             meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
             date = meta.get("played_at") or datetime.date.fromtimestamp(
                 d.stat().st_mtime).isoformat()
-            drill = dp.get("drill") or {}
+            drills = dp.get("drills") or []
+            top_drill = drills[0] if drills else {}
             points.append({
                 "session_id": d.name,
                 "label": meta.get("label") or meta.get("filename"),
@@ -285,8 +286,11 @@ def progress():
                 "dupr_band": dp.get("band"),
                 "dupr_confidence": dp.get("confidence"),
                 "known_dupr": meta.get("known_dupr"),
-                "weakest_dimension": drill.get("dimension"),
-                "weakest_label": drill.get("target_label"),
+                "weakest_dimension": top_drill.get("dimension"),
+                "weakest_label": top_drill.get("target_label"),
+                # per-dimension bands, so the UI can tell whether a
+                # previously-flagged weak dimension has actually improved
+                "dimensions": dp.get("dimensions") or {},
             })
     points.sort(key=lambda p: p["date"])
     return points

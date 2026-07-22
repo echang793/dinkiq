@@ -221,10 +221,14 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
     mix: dict[str, int] = {}
     for s in shots:
         mix[s["type"]] = mix.get(s["type"], 0) + 1
-    speeds = [s["mph"] for s in shots if s["mph"] is not None]
+    timed = [s for s in shots if s["mph"] is not None]
+    speeds = [s["mph"] for s in timed]
+    fastest = max(timed, key=lambda s: s["mph"]) if timed else None
     speed_stats = {
         "avg_shot_mph": round(float(np.mean(speeds)), 1) if speeds else None,
-        "top_shot_mph": round(float(max(speeds)), 1) if speeds else None,
+        "top_shot_mph": fastest["mph"] if fastest else None,
+        # lets the UI jump straight to this shot's moment in its rally clip
+        "top_shot_t": fastest["t"] if fastest else None,
     }
     report = {"available": True, "ball": ball_stats, "shots": shots, "shot_mix": mix,
              **speed_stats,

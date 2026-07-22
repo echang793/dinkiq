@@ -74,22 +74,52 @@ DRILLS: dict[str, dict] = {
 }
 
 
-def drill_for_weakest(dupr: dict) -> dict | None:
-    """The single most actionable drill, targeting whichever rubric dimension
-    scored lowest — None if nothing is weak enough to warrant one."""
+def drills_for_weak(dupr: dict, max_drills: int = 3) -> list[dict]:
+    """A drill for every weak dimension, ranked worst-first — matches the
+    same weak-dimension set coach_tips() surfaces, so the tips a player
+    reads and the practice plan they're given actually agree. Empty list
+    if nothing is weak enough to warrant one."""
     if not dupr.get("available"):
-        return None
+        return []
     dims = dupr.get("dimensions") or {}
     if not dims:
+        return []
+    ranked = sorted(dims.items(), key=lambda kv: kv[1]["band"])
+    drills = []
+    for name, d in ranked:
+        if d["band"] >= WEAK_BAND or len(drills) >= max_drills:
+            break
+        drill = dict(DRILLS[name])
+        drill["dimension"] = name
+        drill["target_label"] = d["label"]
+        drill["band"] = d["band"]
+        drills.append(drill)
+    return drills
+
+
+FATIGUE_DROP_PCT = 20.0  # meaningful conditioning-related decline, not noise
+
+
+def fatigue_note(movement_curve: list[dict]) -> str | None:
+    """A coaching sentence when movement speed fades meaningfully in the
+    second half of a session — the movement_curve chart already shows this,
+    but a chart is easy to skim past; say it in words. None if the sample
+    is too short to trust or there's no meaningful drop."""
+    if len(movement_curve) < 4:
         return None
-    name, d = min(dims.items(), key=lambda kv: kv[1]["band"])
-    if d["band"] >= WEAK_BAND:
+    half = len(movement_curve) // 2
+    early = [b["avg_speed_ft_s"] for b in movement_curve[:half]]
+    late = [b["avg_speed_ft_s"] for b in movement_curve[half:]]
+    early_avg = sum(early) / len(early)
+    late_avg = sum(late) / len(late)
+    if early_avg <= 0:
         return None
-    drill = dict(DRILLS[name])
-    drill["dimension"] = name
-    drill["target_label"] = d["label"]
-    drill["band"] = d["band"]
-    return drill
+    drop_pct = 100.0 * (early_avg - late_avg) / early_avg
+    if drop_pct < FATIGUE_DROP_PCT:
+        return None
+    return (f"Your movement speed dropped {drop_pct:.0f}% in the second half of the "
+           f"session ({early_avg:.1f} → {late_avg:.1f} ft/s) — conditioning, not "
+           "technique, may be the limiter late in matches.")
 
 
 def coach_tips(dupr: dict, max_tips: int = 3) -> list[str]:

@@ -507,15 +507,19 @@ def analyze(sdir: Path) -> None:
 
         set_status(sdir, "rating", "running")
         from dupr import estimate
-        from feedback import coach_tips, drill_for_weakest
+        from feedback import coach_tips, drills_for_weak, fatigue_note
+        m_final = json.loads((sdir / "metrics.json").read_text())
         rating = estimate(
-            json.loads((sdir / "metrics.json").read_text()),
+            m_final,
             json.loads((sdir / "events.json").read_text()),
             json.loads((sdir / "shots.json").read_text()),
             calibration=calib_data,
         )
         rating["tips"] = coach_tips(rating)
-        rating["drill"] = drill_for_weakest(rating)
+        note = fatigue_note(m_final.get("movement_curve") or [])
+        if note:
+            rating["tips"].append(note)
+        rating["drills"] = drills_for_weak(rating)
         (sdir / "dupr.json").write_text(json.dumps(rating))
         set_status(sdir, "done", "done")
         notify_webhook(sdir, ok=True)

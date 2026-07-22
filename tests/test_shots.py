@@ -111,6 +111,27 @@ def test_shot_report_includes_mph():
     assert rep["top_shot_mph"] == expected
 
 
+def test_shot_report_top_shot_t_points_at_the_fastest_shot():
+    # two hits: a slow one at t=1.0, a much faster one at t=5.0 -- top_shot_t
+    # must point at the fast one, not just the last shot in the list
+    rallies = [{"start": 1.0, "end": 5.0, "hits": 2, "duration": 4.0}]
+    hits = np.array([1.0, 5.0])
+    mine = np.array([True, True])
+    frames_slow = np.arange(25, 46)
+    x_slow = (frames_slow - 25) * 1.0          # ~30 px/s
+    frames_fast = np.arange(140, 166)
+    x_fast = (frames_fast - 140) * 20.0 + 1000.0  # ~600 px/s
+    ball = pd.concat([
+        pd.DataFrame({"frame": frames_slow, "x": x_slow, "y": 300.0, "seg": 0}),
+        pd.DataFrame({"frame": frames_fast, "x": x_fast, "y": 300.0, "seg": 1}),
+    ], ignore_index=True)
+    pos = pd.DataFrame(columns=["t", "x", "y"])
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS)
+    assert rep["top_shot_t"] == 5.0
+    assert rep["top_shot_mph"] > rep["shots"][0]["mph"]
+
+
 def test_opponent_shot_landings_and_report():
     hit_times = np.array([1.0, 2.0, 3.0])
     hitters = ["subject", "opponent1", "opponent1"]
@@ -192,6 +213,7 @@ if __name__ == "__main__":
                test_serve_depth_rejects_implausible_bounce,
                test_serve_depth_picks_plausible_bounce_over_glitch,
                test_opponent_shot_landings_rejects_implausible_bounce,
-               test_opponent_shot_report_combines_opponent1_and_opponent2]:
+               test_opponent_shot_report_combines_opponent1_and_opponent2,
+               test_shot_report_top_shot_t_points_at_the_fastest_shot]:
         fn()
         print(f"ok {fn.__name__}")

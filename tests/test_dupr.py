@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from dupr import RUBRIC, estimate, interp_band
-from feedback import coach_tips, drill_for_weakest
+from dupr import RUBRIC, estimate, interp_band, next_anchor_target
+from feedback import coach_tips, drills_for_weak, fatigue_note
 
 GOOD_METRICS = {"zone_pct": {"kitchen": 55.0, "transition": 12.0, "baseline": 33.0},
                 "active_seconds": 900.0, "warnings": []}
@@ -30,6 +30,20 @@ def test_interp_band_monotone_and_clamped():
     assert interp_band(45, pos) == 2.5 and interp_band(8, pos) == 5.0
 
 
+def test_next_anchor_target_increasing_dimension():
+    anchors = RUBRIC["nvz_discipline"]["anchors"]  # [(5,2.5),(20,3.0),(35,3.5),(50,4.25),(65,5.0)]
+    assert next_anchor_target(31.0, anchors) == (35, 3.5)
+    assert next_anchor_target(47.5, anchors) == (50, 4.25)
+    assert next_anchor_target(65.0, anchors) is None    # already at the top anchor
+    assert next_anchor_target(90.0, anchors) is None    # past it
+
+
+def test_next_anchor_target_decreasing_dimension():
+    anchors = RUBRIC["positioning"]["anchors"]  # [(45,2.5),(35,3.0),(25,3.5),(15,4.25),(8,5.0)]
+    assert next_anchor_target(25.0, anchors) == (15, 4.25)
+    assert next_anchor_target(8.0, anchors) is None
+
+
 def test_strong_player_beats_weak_player():
     strong = estimate(GOOD_METRICS, GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
     weak = estimate(WEAK_METRICS, {"rally_count": 8, "avg_rally_hits": 3.5},
@@ -38,6 +52,16 @@ def test_strong_player_beats_weak_player():
     assert strong["band"] > weak["band"] + 0.5, (strong["band"], weak["band"])
     assert strong["band"] <= 5.0 and weak["band"] >= 2.5
     assert strong["band"] % 0.25 == 0  # quarter-band granularity
+
+
+def test_dimensions_include_unit_and_next_target():
+    weak = estimate(WEAK_METRICS, {"rally_count": 8, "avg_rally_hits": 3.5},
+                    {"available": False}, CAL_FULL)
+    kitchen = weak["dimensions"]["nvz_discipline"]
+    assert kitchen["unit"] == "%"
+    assert kitchen["next_target_value"] is not None
+    assert kitchen["next_target_band"] is not None
+    assert kitchen["next_target_band"] > kitchen["band"]
 
 
 def test_confidence_penalties():
@@ -84,29 +108,54 @@ def test_tips_target_weakest():
     assert stips and all("only" not in t.lower()[:30] for t in stips[:1])
 
 
-def test_drill_targets_weakest_dimension():
+def test_drills_rank_all_weak_dimensions():
     weak = estimate(WEAK_METRICS, {"rally_count": 8, "avg_rally_hits": 3.5},
                     {"available": False}, CAL_FULL)
-    drill = drill_for_weakest(weak)
-    assert drill is not None
-    assert drill["dimension"] == "nvz_discipline"  # weakest in WEAK_METRICS
-    assert drill["name"] == "Return-and-Run"
-    assert "reps" in drill and "description" in drill
+    drills = drills_for_weak(weak)
+    assert drills, "weak player must get at least one drill"
+    assert drills[0]["dimension"] == "nvz_discipline"  # weakest in WEAK_METRICS
+    assert drills[0]["name"] == "Return-and-Run"
+    assert "reps" in drills[0] and "description" in drills[0]
+    # ranked worst-first, matching coach_tips' own ranking
+    bands = [d["band"] for d in drills]
+    assert bands == sorted(bands)
+    assert len(drills) <= 3
 
 
-def test_drill_none_when_nothing_weak():
+def test_drills_empty_when_nothing_weak():
     strong = estimate(GOOD_METRICS, GOOD_EVENTS, GOOD_SHOTS, CAL_FULL)
-    assert drill_for_weakest(strong) is None
+    assert drills_for_weak(strong) == []
 
 
-def test_drill_none_when_unavailable():
-    assert drill_for_weakest({"available": False}) is None
+def test_drills_empty_when_unavailable():
+    assert drills_for_weak({"available": False}) == []
+
+
+def test_fatigue_note_flags_meaningful_drop():
+    curve = [{"avg_speed_ft_s": 5.0}, {"avg_speed_ft_s": 5.2},
+             {"avg_speed_ft_s": 3.0}, {"avg_speed_ft_s": 2.8}]
+    note = fatigue_note(curve)
+    assert note is not None
+    assert "second half" in note
+
+
+def test_fatigue_note_none_when_steady():
+    curve = [{"avg_speed_ft_s": 4.0}, {"avg_speed_ft_s": 4.1},
+             {"avg_speed_ft_s": 3.9}, {"avg_speed_ft_s": 4.0}]
+    assert fatigue_note(curve) is None
+
+
+def test_fatigue_note_none_when_too_short():
+    assert fatigue_note([{"avg_speed_ft_s": 5.0}, {"avg_speed_ft_s": 1.0}]) is None
 
 
 if __name__ == "__main__":
-    for fn in [test_interp_band_monotone_and_clamped, test_strong_player_beats_weak_player,
-               test_confidence_penalties, test_unmeasurable_dims_omitted,
-               test_tips_target_weakest, test_drill_targets_weakest_dimension,
-               test_drill_none_when_nothing_weak, test_drill_none_when_unavailable]:
+    for fn in [test_interp_band_monotone_and_clamped, test_next_anchor_target_increasing_dimension,
+               test_next_anchor_target_decreasing_dimension, test_strong_player_beats_weak_player,
+               test_dimensions_include_unit_and_next_target, test_confidence_penalties,
+               test_unmeasurable_dims_omitted, test_tips_target_weakest,
+               test_drills_rank_all_weak_dimensions, test_drills_empty_when_nothing_weak,
+               test_drills_empty_when_unavailable, test_fatigue_note_flags_meaningful_drop,
+               test_fatigue_note_none_when_steady, test_fatigue_note_none_when_too_short]:
         fn()
         print(f"ok {fn.__name__}")

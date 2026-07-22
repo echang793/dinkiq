@@ -22,26 +22,31 @@ RUBRIC: dict[str, dict] = {
         "weight": 0.30,
         "anchors": [(5, 2.5), (20, 3.0), (35, 3.5), (50, 4.25), (65, 5.0)],
         "label": "Kitchen presence",
+        "unit": "%",
     },
     "positioning": {             # % of time in no-man's land (lower = better)
         "weight": 0.20,
         "anchors": [(45, 2.5), (35, 3.0), (25, 3.5), (15, 4.25), (8, 5.0)],
         "label": "Court positioning",
+        "unit": "%",
     },
     "rally_sustain": {           # average hits per rally
         "weight": 0.20,
         "anchors": [(3, 2.5), (5, 3.0), (7, 3.5), (10, 4.25), (14, 5.0)],
         "label": "Rally consistency",
+        "unit": " hits",
     },
     "shot_variety": {            # distinct shot types used (of drive/dink/drop)
         "weight": 0.15,
         "anchors": [(0, 2.5), (1, 3.0), (2, 3.75), (3, 4.5)],
         "label": "Shot variety",
+        "unit": " types",
     },
     "serve_depth": {             # % of measured serves landing within 8ft of baseline
         "weight": 0.15,
         "anchors": [(0, 2.75), (25, 3.0), (50, 3.5), (75, 4.25), (95, 5.0)],
         "label": "Serve depth",
+        "unit": "%",
     },
 }
 
@@ -74,6 +79,22 @@ def interp_band(value: float, anchors: list[tuple[float, float]]) -> float:
     return float(np.clip(np.interp(value, xs, ys), BAND_MIN, BAND_MAX))
 
 
+def next_anchor_target(value: float, anchors: list[tuple[float, float]]) -> tuple[float, float] | None:
+    """The nearest better anchor above `value`'s current position — a
+    concrete "reach X to hit the next tier" number, not just a score.
+    None once `value` is at or past the top anchor (nothing further this
+    rubric can distinguish). Anchors may run in decreasing metric order
+    (lower-is-better dimensions like positioning), same convention as
+    interp_band."""
+    xs = [a[0] for a in anchors]
+    decreasing = xs[0] > xs[-1]
+    if not decreasing:
+        better = [(x, y) for x, y in anchors if x > value + 1e-9]
+        return min(better, key=lambda p: p[0]) if better else None
+    better = [(x, y) for x, y in anchors if x < value - 1e-9]
+    return max(better, key=lambda p: p[0]) if better else None
+
+
 def extract_dimension_values(metrics: dict, events: dict, shots: dict) -> dict[str, float]:
     """Pull each rubric dimension's raw value; omit unmeasurable dimensions."""
     vals: dict[str, float] = {}
@@ -99,9 +120,13 @@ def estimate(metrics: dict, events: dict, shots: dict,
     dims = {}
     for name, spec in RUBRIC.items():
         if name in vals:
+            anchors = active_anchors(name)
+            target = next_anchor_target(vals[name], anchors)
             dims[name] = {"label": spec["label"], "value": round(vals[name], 1),
-                          "band": round(interp_band(vals[name], active_anchors(name)), 2),
-                          "weight": spec["weight"]}
+                          "band": round(interp_band(vals[name], anchors), 2),
+                          "weight": spec["weight"], "unit": spec["unit"],
+                          "next_target_value": round(target[0], 1) if target else None,
+                          "next_target_band": round(target[1], 2) if target else None}
 
     if not dims or "nvz_discipline" not in dims:
         return {"available": False,

@@ -461,6 +461,7 @@
   <section class="screen on" id="home">
     <div class="card">
       <h2>New session</h2>
+      <div id="focusReminder" class="coach" style="display:none;margin-bottom:12px"></div>
       <div class="matchseg" role="group" aria-label="Match type">
         <button type="button" class="on" id="matchSingles" onclick="setMatchType('singles')">Singles</button>
         <button type="button" id="matchDoubles" onclick="setMatchType('doubles')">Doubles</button>
@@ -897,7 +898,7 @@ function show(id, instant) {
       { duration: 480, easing: 'cubic-bezier(.22,1,.36,1)', pseudoElement: '::view-transition-new(root)' });
   });
 }
-function goHome() { clearInterval(pollTimer); show('home'); loadSessions(); loadTrend(); }
+function goHome() { clearInterval(pollTimer); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
 function goSessions() { clearInterval(pollTimer); show('sessions'); loadSessionsPage(); }
 function goTrends() { clearInterval(pollTimer); show('trends'); loadTrendsPage(); }
 
@@ -1264,7 +1265,10 @@ function renderDupr(d) {
       Object.values(d.dimensions || {}).sort((a,b) => a.band - b.band).map(dim => {
         const pct = Math.max(4, Math.min(100, 100 * (dim.band - DUPR_BAND_MIN) / DUPR_BAND_SPAN));
         const col = dim.band < d.band - .25 ? 'var(--amber)' : 'var(--accent)';
-        return '<div class="bar"><span class="lb">' + esc(dim.label) + '</span>' +
+        const target = dim.next_target_value != null
+          ? '<div class="mut" style="font-size:10px;margin-top:1px">reach ' + dim.next_target_value + (dim.unit || '') +
+            ' for the next tier (' + dim.next_target_band.toFixed(2) + ')</div>' : '';
+        return '<div class="bar"><span class="lb">' + esc(dim.label) + target + '</span>' +
           '<div class="track"><div class="fill" data-w="' + pct + '%" style="background:' + col + '"></div></div>' +
           '<span class="val">' + dim.band.toFixed(1) + '</span></div>';
       }).join('') + '</div></div>' +
@@ -1289,11 +1293,12 @@ function renderDupr(d) {
     ? d.tips.map(t => '<div class="coach">' + tipSVG + '<span>' + esc(t) + '</span></div>').join('')
     : '<div class="empty">No tips for this session.</div>';
   const drillEl = $('drillBox');
-  if (d.drill) {
+  if (d.drills && d.drills.length) {
     drillEl.style.display = 'block';
-    drillEl.innerHTML = '<div class="caveat" style="border-color:var(--accentline,var(--line2))">' +
-      '<div><b>Drill: ' + esc(d.drill.name) + '</b> <span class="mut">(' + esc(d.drill.reps) + ' — targets ' + esc(d.drill.target_label) + ')</span>' +
-      '<div style="margin-top:6px">' + esc(d.drill.description) + '</div></div></div>';
+    drillEl.innerHTML = d.drills.map(dr =>
+      '<div class="caveat" style="border-color:var(--accentline,var(--line2));margin-bottom:8px">' +
+        '<div><b>Drill: ' + esc(dr.name) + '</b> <span class="mut">(' + esc(dr.reps) + ' — targets ' + esc(dr.target_label) + ')</span>' +
+        '<div style="margin-top:6px">' + esc(dr.description) + '</div></div></div>').join('');
   } else {
     drillEl.style.display = 'none';
   }
@@ -1450,6 +1455,11 @@ function renderShots(sh) {
   } else {
     serveCard.style.display = 'none';
   }
+  if (sh.top_shot_t != null && !DEMO) {
+    $('shotNote').innerHTML = '<div class="link" style="margin-top:10px;cursor:pointer" ' +
+      'onclick="watchShotAt(' + sh.top_shot_t + ')" tabindex="0" role="button">▶ Watch your fastest shot (' +
+      sh.top_shot_mph + ' mph)</div>';
+  }
 }
 const SHOT_TYPE_COLORS = { drive: '#5b82e8', dink: '#39d5ff', drop: '#f0a63d', medium: '#8b6bf0', unknown: '#6b7280' };
 const SHOT_TYPE_LABELS = { drive:'Drive', dink:'Dink', drop:'Drop', medium:'Medium-paced', unknown:'Not classified' };
@@ -1479,7 +1489,49 @@ function drawShotHeatmap(shots) {
   $('shotHeatLegend').innerHTML = types.map(t =>
     '<span style="display:inline-flex;align-items:center;gap:5px;margin-right:12px">' +
     '<span style="width:9px;height:9px;border-radius:50%;background:' + (SHOT_TYPE_COLORS[t] || SHOT_TYPE_COLORS.unknown) + ';display:inline-block"></span>' +
-    esc(SHOT_TYPE_LABELS[t] || t) + '</span>').join('');
+    esc(SHOT_TYPE_LABELS[t] || t) + '</span>').join('') +
+    (DEMO ? '' : '<span class="mut" style="margin-left:8px">· tap a dot to watch that shot</span>');
+  c.style.cursor = DEMO ? '' : 'pointer';
+  c.onclick = DEMO ? null : (e) => {
+    const rect = c.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) * (c.width / rect.width);
+    const cy = (e.clientY - rect.top) * (c.height / rect.height);
+    let best = -1, bestD = 14;  // px hit radius in canvas space
+    shots.forEach((s, i) => {
+      const d = Math.hypot(px(s.x) - cx, py(s.y) - cy);
+      if (d < bestD) { bestD = d; best = i; }
+    });
+    if (best >= 0) watchShotAt(shots[best].t);
+  };
+}
+
+/* ---- jump to a shot's moment inside its rally clip ---- */
+function findRallyIndexForTime(t) {
+  const rallies = (lastSession && lastSession.events && lastSession.events.rallies) || [];
+  for (let i = 0; i < rallies.length; i++) {
+    if (t >= rallies[i].start - 0.01 && t <= rallies[i].end + 2.0) return i;
+  }
+  return -1;
+}
+function watchShotAt(t) {
+  if (DEMO) { toast('Clip playback needs the live backend'); return; }
+  const i = findRallyIndexForTime(t);
+  if (i < 0) { toast("Couldn't find this shot in a rally clip"); return; }
+  const rallies = lastSession.events.rallies;
+  const clipStart = Math.max(0, rallies[i].start - 1.5);  // matches the padding clips are cut with
+  const offset = Math.max(0, t - clipStart);
+  const v = $('rallyVideo');
+  playClip(i);
+  // Polling instead of a 'loadedmetadata' listener: re-watching the SAME
+  // clip re-assigns an identical src, which some browsers silently no-op
+  // (no reload, no event) — a one-shot event listener would then just
+  // never fire and the seek would be lost. Checking readyState directly
+  // works regardless of whether a reload actually happened.
+  let tries = 0;
+  (function trySeek() {
+    if (v.readyState >= 1) { v.currentTime = offset; return; }
+    if (++tries < 50) setTimeout(trySeek, 100);  // up to ~5s for a fresh load
+  })();
 }
 
 async function loadSynergy() {
@@ -2084,9 +2136,24 @@ async function loadTrendsPage() {
       '<span class="val">' + n + '/' + flagged.length + '</span></div>').join('');
     animateBars($('weakTrendBars'));
     const top = ranked[0];
-    $('weakTrendNote').textContent = top[1] > 1
+    let note = top[1] > 1
       ? top[0] + ' has been your weakest dimension in ' + top[1] + ' of your last ' + flagged.length + ' rated sessions — worth targeting.'
       : 'No single dimension has repeated as your weakest yet — keep playing to build a pattern.';
+    // "did it work?" — once a dimension's been flagged weak more than once,
+    // check whether it's actually gotten better since the first flag
+    const dimKey = (flagged.find(p => p.weakest_label === top[0]) || {}).weakest_dimension;
+    const firstFlagged = dimKey && flagged.find(p => p.weakest_dimension === dimKey);
+    const withDim = dimKey ? pts.filter(p => p.dimensions && p.dimensions[dimKey]) : [];
+    const latestWithDim = withDim[withDim.length - 1];
+    if (top[1] > 1 && firstFlagged && latestWithDim && firstFlagged.dimensions &&
+        firstFlagged.dimensions[dimKey]) {
+      const before = firstFlagged.dimensions[dimKey].band, after = latestWithDim.dimensions[dimKey].band;
+      if (after - before >= 0.25) {
+        note += ' Good news: it\'s improved from ' + before.toFixed(2) + ' to ' + after.toFixed(2) +
+          ' since ' + firstFlagged.date + '.';
+      }
+    }
+    $('weakTrendNote').textContent = note;
   } else {
     weakCard.style.display = 'none';
   }
@@ -2124,6 +2191,16 @@ async function loadStreak() {
 }
 
 /* ---------------- trend ---------------- */
+async function loadFocusReminder() {
+  const box = $('focusReminder');
+  let pts;
+  try { pts = await api('/progress'); } catch (e) { box.style.display = 'none'; return; }
+  const last = pts[pts.length - 1];
+  if (!last || !last.weakest_label) { box.style.display = 'none'; return; }
+  box.style.display = 'flex';
+  box.innerHTML = tipSVG + '<span>Last time: work on <b>' + esc(last.weakest_label) +
+    '</b> — that was your weakest area in your most recent rated session.</span>';
+}
 async function loadTrend() {
   let pts;
   try { pts = await api('/progress'); } catch (e) { return; }
@@ -2591,7 +2668,7 @@ buildRibbon();
 attachTilt($('covCard'));
 attachTilt(document.querySelector('.figcard'));
 applySkin(localStorage.getItem('pc_skin') || 'night');
-loadSessions(); loadTrend();
+loadSessions(); loadTrend(); loadFocusReminder();
 </script>
 </body>
 </html>
