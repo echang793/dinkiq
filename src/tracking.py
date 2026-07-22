@@ -188,20 +188,49 @@ def pick_opponent(df: pd.DataFrame, calib: CourtCalibration,
     return result[0] if result else None
 
 
+def _cluster_person_chains(df: pd.DataFrame, ids: set[int]) -> list[set[int]]:
+    """Group leftover track ids into person-chains via the same
+    continuity logic as stitch_subject, so one real person fragmented
+    across many tracker re-ids (occlusion, camera motion) is counted once
+    instead of once per fragment. Seeds chains in first-appearance order
+    so an earlier fragment always claims its own later fragments first.
+    """
+    remaining = df[df["track_id"].isin(ids)]
+    if remaining.empty:
+        return []
+    order = remaining.groupby("track_id")["frame"].min().sort_values().index.tolist()
+    seen: set[int] = set()
+    chains: list[set[int]] = []
+    for tid in order:
+        if tid in seen:
+            continue
+        chain = stitch_chain_ids(remaining, tid)
+        seen |= chain
+        chains.append(chain)
+    return chains
+
+
 def count_secondary_court_tracks(df: pd.DataFrame, calib: CourtCalibration,
                                  exclude_ids: set[int]) -> int:
-    """Count other on-court tracks besides all already-identified players
+    """Count other on-court PEOPLE besides all already-identified players
     that meet the same visibility bar as an opponent candidate
-    (MIN_OPPONENT_FRAMES, ever on-court). A nonzero count suggests an
-    unexpected extra person (crowded court) — callers should only treat
-    this as a doubles-ambiguity signal in singles mode, since doubles
-    already expects 4 identified players on court.
+    (MIN_OPPONENT_FRAMES total frames, ever on-court). A nonzero count
+    suggests an unexpected extra person (crowded court) — callers should
+    only treat this as a doubles-ambiguity signal in singles mode, since
+    doubles already expects 4 identified players on court.
+
+    Clusters raw track ids into person-chains first (see
+    _cluster_person_chains) — without this, a single real person whose
+    tracker id fragments repeatedly (very possible on non-tripod footage;
+    stitch_subject's own docs note 485 ids for 4 players on one broadcast
+    clip) gets counted as a new "extra person" every time they're re-id'd.
     """
-    candidates = df[~df["track_id"].isin(exclude_ids)]
-    if candidates.empty:
+    candidate_ids = set(df["track_id"].unique()) - exclude_ids
+    if not candidate_ids:
         return 0
     count = 0
-    for tid, g in candidates.groupby("track_id"):
+    for chain in _cluster_person_chains(df, candidate_ids):
+        g = df[df["track_id"].isin(chain)]
         if len(g) < MIN_OPPONENT_FRAMES:
             continue
         pts = calib.to_court(feet_px(g))

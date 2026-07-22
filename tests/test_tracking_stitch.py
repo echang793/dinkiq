@@ -116,6 +116,30 @@ def test_count_secondary_court_tracks_zero_for_singles():
     assert count_secondary_court_tracks(df, calib, subject_ids | {3}) == 0
 
 
+def test_count_secondary_court_tracks_ignores_opponent_id_fragments():
+    """The tracker fragments ids on occlusion/camera motion — an opponent
+    whose real on-court presence is split across two track ids must not be
+    double-counted as an extra person once both fragments are excluded.
+    Regression test for a real bug: one real opponent's re-id fragments
+    inflated secondary_court_tracks to 178 in a live singles session,
+    firing the crowded-court warning for a normal 1v1 match."""
+    calib = CourtCalibration(CAMERA_CORNERS)
+    subject = _frag(1, 0, 200, 700, 600)
+    opp_part1 = _frag(3, 0, 100, 700, 100)             # opponent, first half
+    opp_part2 = _frag(6, 105, 100, 700 + 2 * 105, 100)  # same opponent, re-id'd after a gap
+    df = pd.concat([subject, opp_part1, opp_part2], ignore_index=True)
+    subject_ids = stitch_chain_ids(df, 1)
+
+    # excluding only the raw anchor id (the old bug) -- the re-id'd
+    # fragment looks like a brand-new extra person
+    assert count_secondary_court_tracks(df, calib, subject_ids | {3}) == 1
+
+    # excluding the opponent's full stitched chain (the fix)
+    opp_ids = stitch_chain_ids(df, 3)
+    assert opp_ids == {3, 6}
+    assert count_secondary_court_tracks(df, calib, subject_ids | opp_ids) == 0
+
+
 def test_pick_opponents_n2_returns_both_far_side_players():
     calib = CourtCalibration(CAMERA_CORNERS)
     subject = _frag(1, 0, 200, 700, 600)     # near-bottom: subject's baseline
@@ -137,6 +161,7 @@ if __name__ == "__main__":
                test_pick_opponent_none_when_nobody_else_visible,
                test_count_secondary_court_tracks_flags_doubles_partner,
                test_count_secondary_court_tracks_zero_for_singles,
+               test_count_secondary_court_tracks_ignores_opponent_id_fragments,
                test_pick_opponents_n2_returns_both_far_side_players]:
         fn()
         print(f"ok {fn.__name__}")

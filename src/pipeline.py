@@ -472,10 +472,19 @@ def analyze(sdir: Path) -> None:
                                    n=2 if doubles else 1) if len(tracks) else []
 
         # 4 known players is expected in doubles, not an ambiguity signal —
-        # only dock confidence for an unexpected extra person in singles
+        # only dock confidence for an unexpected extra person in singles.
+        # Opponents need the same stitching subject/partner already get:
+        # the tracker fragments ids on occlusion/camera motion, so without
+        # this every re-acquired fragment of the SAME opponent looked like
+        # a brand-new "extra person" on court (observed: 178 phantom
+        # players from one real opponent in a single-camera clip).
+        opponent_ids: set[int] = set()
+        for opp_id in opponents:
+            opponent_ids |= stitch_chain_ids(tracks, opp_id)
+
         secondary_court_tracks = 0
         if not doubles and len(tracks):
-            all_ids = exclude_ids | set(opponents)
+            all_ids = exclude_ids | opponent_ids
             secondary_court_tracks = count_secondary_court_tracks(tracks, calib, all_ids)
 
         cuts_f = sdir / "cuts.json"
