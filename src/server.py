@@ -223,6 +223,37 @@ def sessions(label: str | None = None, opponent: str | None = None,
     return out
 
 
+@app.get("/api/sessions/export.csv")
+def export_sessions_csv():
+    """Flat CSV of every completed session's summary stats (same fields
+    _compare_summary already aggregates), for users who want to pivot their
+    own history in Sheets/Excel."""
+    import csv
+    import io
+
+    rows = []
+    if SESSIONS.exists():
+        for d in sorted(SESSIONS.iterdir(), key=lambda p: p.stat().st_mtime):
+            if not d.is_dir() or d == TRASH:
+                continue
+            if get_status(d).get("stage") != "done":
+                continue
+            row = _compare_summary(d)
+            row["player"] = _load_json(d, "meta.json").get("player") or DEFAULT_PLAYER_NAME
+            rows.append(row)
+
+    buf = io.StringIO()
+    fieldnames = ["session_id", "player", "label", "played_at", "opponent",
+                 "kitchen_pct", "transition_pct", "distance_ft", "avg_speed_ft_s",
+                 "coverage_pct", "rally_count", "avg_rally_hits", "play_time_pct",
+                 "points_won", "points_lost", "win_pct", "dupr_band", "dupr_confidence"]
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(rows)
+    return Response(content=buf.getvalue(), media_type="text/csv", headers={
+        "Content-Disposition": 'attachment; filename="dinkiq_sessions.csv"'})
+
+
 @app.get("/api/progress")
 def progress():
     """Cross-session trend series (completed sessions, oldest first)."""
@@ -270,6 +301,49 @@ def patch_meta(sid: str, patch: MetaPatch):
         meta[k] = v
     meta_f.write_text(json.dumps(meta))
     return meta
+
+
+WINNER_VALUES = {"my_team", "opp_team", "unknown"}
+
+
+class PointCorrection(BaseModel):
+    winner: str
+    unforced_error: bool | None = None
+
+    @field_validator("winner")
+    @classmethod
+    def _valid_winner(cls, v):
+        if v not in WINNER_VALUES:
+            raise ValueError(f"winner must be one of {sorted(WINNER_VALUES)}")
+        return v
+
+
+@app.patch("/api/session/{sid}/points/{idx}")
+def correct_point(sid: str, idx: int, patch: PointCorrection):
+    """Manually override a heuristically-detected rally winner (the
+    audio+ball heuristic in points.py can misjudge close calls). Recomputes
+    the session's win/loss summary from the corrected outcomes; per-player
+    hit counts are independent of who won each rally, so they're carried
+    over unchanged rather than recomputed (the hitter attribution used to
+    build them isn't persisted anywhere)."""
+    from points import point_summary
+
+    sdir = _sdir(sid)
+    pf = sdir / "points.json"
+    data = json.loads(pf.read_text()) if pf.exists() else {}
+    outcomes = data.get("outcomes", [])
+    if idx < 0 or idx >= len(outcomes):
+        raise HTTPException(404, "rally index out of range")
+    outcomes[idx]["winner"] = patch.winner
+    if patch.unforced_error is not None:
+        outcomes[idx]["unforced_error"] = patch.unforced_error
+    outcomes[idx]["corrected"] = True
+    ball_available = "caveat" not in data
+    summary = point_summary(outcomes, ball_available)
+    summary["hits_by_player"] = data.get("hits_by_player", {})
+    new_data = {"outcomes": outcomes, **summary}
+    pf.write_text(json.dumps(new_data))
+    return new_data
 
 
 @app.post("/api/sessions/delete")
@@ -470,7 +544,103 @@ def opponent_history(name: str):
     }
 
 
+@app.get("/api/opponents/{name}/scouting")
+def opponent_scouting(name: str):
+    """Aggregate this opponent's own shot-landing tendency (dominant side,
+    from tracked bounces after their hits — see shots.py's opponent_shots)
+    across every completed session played against them, plus the win/loss
+    context from opponent_history. Real-data only: sessions with no ball
+    tracking simply don't contribute landing data."""
+    side_counts: dict[str, int] = {}
+    shots_tracked = 0
+    if SESSIONS.exists():
+        for d in SESSIONS.iterdir():
+            if not d.is_dir() or d == TRASH:
+                continue
+            meta = _load_json(d, "meta.json")
+            if (meta.get("opponent") or "").strip().lower() != name.strip().lower():
+                continue
+            if get_status(d).get("stage") != "done":
+                continue
+            opp = _load_json(d, "shots.json").get("opponent_shots") or {}
+            for side, n in (opp.get("side_counts") or {}).items():
+                side_counts[side] = side_counts.get(side, 0) + n
+            shots_tracked += opp.get("shots_tracked", 0)
+
+    record = opponent_history(name)
+    dominant = max(side_counts, key=side_counts.get) if side_counts else None
+    return {
+        "opponent": name,
+        "matches": record["matches"],
+        "wins": record["wins"],
+        "losses": record["losses"],
+        "win_pct": record["win_pct"],
+        "shots_tracked": shots_tracked,
+        "side_counts": side_counts,
+        "dominant_side": dominant,
+        "dominant_side_pct": round(100.0 * side_counts[dominant] / shots_tracked, 1)
+                            if dominant and shots_tracked else None,
+    }
+
+
 DEFAULT_PLAYER_NAME = "You"
+
+
+@app.get("/api/streak")
+def streak():
+    """Consecutive-day play streak + this-week count, scoped to
+    DEFAULT_PLAYER_NAME sessions (same "your" scoping as the leaderboard's
+    unset-player bucket) — a session tagged with someone else's `player`
+    shouldn't inflate your own streak."""
+    import datetime
+
+    dates: set[datetime.date] = set()
+    if SESSIONS.exists():
+        for d in SESSIONS.iterdir():
+            if not d.is_dir() or d == TRASH:
+                continue
+            if get_status(d).get("stage") != "done":
+                continue
+            meta = _load_json(d, "meta.json")
+            if (meta.get("player") or "").strip() and meta["player"].strip() != DEFAULT_PLAYER_NAME:
+                continue
+            played_at = meta.get("played_at")
+            if played_at:
+                try:
+                    dates.add(datetime.date.fromisoformat(played_at))
+                    continue
+                except ValueError:
+                    pass
+            dates.add(datetime.date.fromtimestamp(d.stat().st_mtime))
+
+    today = datetime.date.today()
+    one_day = datetime.timedelta(days=1)
+
+    def run_forward_from(start: datetime.date) -> int:
+        n, cur = 0, start
+        while cur in dates:
+            n += 1
+            cur += one_day
+        return n
+
+    def run_back_from(start: datetime.date) -> int:
+        n, cur = 0, start
+        while cur in dates:
+            n += 1
+            cur -= one_day
+        return n
+
+    current = run_back_from(today) or run_back_from(today - one_day)
+    longest = max((run_forward_from(dt) for dt in dates if dt - one_day not in dates), default=0)
+    week_ago = today - datetime.timedelta(days=6)
+    sessions_this_week = sum(1 for dt in dates if week_ago <= dt <= today)
+
+    return {
+        "current_streak_days": current,
+        "longest_streak_days": longest,
+        "sessions_this_week": sessions_this_week,
+        "days_played": len(dates),
+    }
 
 
 @app.get("/api/leaderboard")
@@ -508,6 +678,37 @@ def leaderboard():
     return {"players": rows}
 
 
+@app.get("/api/session/{sid}/synergy")
+def synergy(sid: str):
+    """Doubles partner positioning report. Computed on demand from
+    tracks.parquet + calibration.json (both survive recalibration) rather
+    than stored at analyze time, since it's cheap and only needed when a
+    user opens it."""
+    sdir = _sdir(sid)
+    if get_status(sdir).get("stage") != "done":
+        raise HTTPException(409, "session not ready")
+    m = _load_json(sdir, "metrics.json")
+    if m.get("match_type") != "doubles" or m.get("partner_track_id") is None:
+        return {"available": False, "reason": "singles session — no partner to compare"}
+    tracks_f, calib_f = sdir / "tracks.parquet", sdir / "calibration.json"
+    if not tracks_f.exists() or not calib_f.exists():
+        return {"available": False, "reason": "tracking data not available"}
+
+    import pandas as pd
+
+    from court import CourtCalibration
+    from metrics import synergy_report
+    from tracking import subject_court_positions
+
+    tracks = pd.read_parquet(tracks_f)
+    calib_data = json.loads(calib_f.read_text())
+    calib = CourtCalibration(calib_data["corners_px"], calib_data.get("kitchen_px"))
+    partner_pos = subject_court_positions(tracks, m["partner_track_id"], calib, pipeline.FPS)
+    pos_f = sdir / "positions.parquet"
+    subject_pos = pd.read_parquet(pos_f) if pos_f.exists() else pd.DataFrame(columns=["t", "x", "y"])
+    return synergy_report(subject_pos, partner_pos)
+
+
 @app.get("/api/session/{sid}")
 def session(sid: str):
     sdir = _sdir(sid)
@@ -531,6 +732,27 @@ def clip(sid: str, n: int):
     if not f.exists():
         raise HTTPException(404, "clip not found")
     return FileResponse(f, media_type="video/mp4")
+
+
+class ClipNote(BaseModel):
+    note: str = Field(default="", max_length=500)
+
+
+@app.patch("/api/session/{sid}/clip/{n}/note")
+def set_clip_note(sid: str, n: int, patch: ClipNote):
+    """Timestamped note on one rally clip, distinct from the session-level
+    `notes` field — for 'watch what happened at this specific rally'."""
+    sdir = _sdir(sid)
+    meta_f = sdir / "meta.json"
+    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    notes = meta.get("clip_notes") or {}
+    if patch.note.strip():
+        notes[str(n)] = patch.note.strip()
+    else:
+        notes.pop(str(n), None)
+    meta["clip_notes"] = notes
+    meta_f.write_text(json.dumps(meta))
+    return {"clip_notes": notes}
 
 
 @app.get("/api/session/{sid}/highlights.mp4")
@@ -564,6 +786,21 @@ def report_pdf(sid: str):
                            _load_json(sdir, "dupr.json"))
     return Response(content=pdf, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="dinkiq_{sid}.pdf"'})
+
+
+@app.get("/api/session/{sid}/card.png")
+def stat_card(sid: str):
+    from card import render_stat_card
+
+    sdir = _sdir(sid)
+    if get_status(sdir).get("stage") != "done":
+        raise HTTPException(409, "session not ready for a stat card")
+
+    png = render_stat_card(_load_json(sdir, "meta.json"), _load_json(sdir, "metrics.json"),
+                           _load_json(sdir, "events.json"), _load_json(sdir, "points.json"),
+                           _load_json(sdir, "dupr.json"))
+    return Response(content=png, media_type="image/png", headers={
+        "Content-Disposition": f'attachment; filename="dinkiq_card_{sid}.png"'})
 
 
 @app.get("/api/session/{sid}/frame")

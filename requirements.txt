@@ -11,3 +11,4 @@ httpx2
 pytest
 reportlab>=4.0
 requests>=2.31
+Pillow>=10.1

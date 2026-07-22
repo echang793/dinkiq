@@ -550,6 +550,7 @@
       <div style="display:flex;flex-wrap:wrap;gap:9px">
         <button class="ghost sm" onclick="downloadReport()">Download report (PDF)</button>
         <button class="ghost sm" onclick="downloadHighlights()">Download highlights</button>
+        <button class="ghost sm" onclick="downloadStatCard()">Share stat card</button>
         <button class="ghost sm" onclick="startCalib()">Recalibrate</button>
         <button class="ghost sm" onclick="reanalyze()">Re-analyze</button>
       </div>
@@ -612,6 +613,11 @@
         <div class="figwrap"><canvas id="curveCanvas"></canvas></div>
       </div>
     </div>
+    <div class="card" id="synergyCard" style="display:none">
+      <h2>Partner synergy</h2>
+      <div class="grid" id="synergyStats"></div>
+      <div id="synergyNote" class="heatnote" style="margin-top:8px">lower overlap = more court spread between you and your partner</div>
+    </div>
     <div class="card">
       <h2>Shots</h2>
       <div class="grid" id="shotStats"></div>
@@ -659,6 +665,7 @@
         <button class="ghost sm" id="cmpBtn" onclick="compareClicked()" disabled>Compare</button>
         <button class="ghost sm" id="delBtn" onclick="deleteClicked()" disabled>Delete selected</button>
         <button class="ghost sm" onclick="openTrash()">View trash</button>
+        <button class="ghost sm" onclick="exportSessionsCsv()">Export CSV</button>
       </div>
     </div>
     <div class="card">
@@ -710,6 +717,10 @@
     </div>
     <div class="card"><div class="grid" id="trendSummary"></div></div>
     <div class="card"><h2>Estimated level over time</h2><div id="trendChartBig"></div></div>
+    <div class="card" id="streakCard" style="display:none">
+      <h2>Streak</h2>
+      <div class="grid" id="streakStats"></div>
+    </div>
     <div class="card" id="weakTrendCard" style="display:none">
       <h2>Recurring weak point</h2>
       <div class="bars" id="weakTrendBars" style="margin-top:8px"></div>
@@ -1164,6 +1175,7 @@ async function showResults(s) {
   drawHeatmap(m, true);
   drawMovementCurve(m.movement_curve);
   loadSubjectMarker(sid);
+  if (m.match_type === 'doubles') loadSynergy(); else $('synergyCard').style.display = 'none';
   renderRallies(s.events);
   renderShots(s.shots);
   renderPoints(s.points, s.events);
@@ -1264,6 +1276,10 @@ function downloadHighlights() {
   toast('Building highlight reel…');
   window.open('/api/session/' + sid + '/highlights.mp4', '_blank');
 }
+function downloadStatCard() {
+  if (DEMO) { toast('Stat card needs the live backend'); return; }
+  window.open('/api/session/' + sid + '/card.png', '_blank');
+}
 const PLAYER_LABELS = { subject: 'you', partner: 'partner', opponent1: 'opp1', opponent2: 'opp2' };
 function isMyTeam(label) { return label === 'my_team' || label === 'subject' || label === 'partner'; }
 function isOppTeam(label) { return label === 'opp_team' || label === 'opponent1' || label === 'opponent2'; }
@@ -1304,12 +1320,17 @@ function renderPoints(pt, ev) {
   if (outs.length) {
     const badge = o => isMyTeam(o.winner) ? '<span class="wbadge win">WON' + (o.winner === 'partner' ? ' (partner)' : '') + '</span>'
       : isOppTeam(o.winner) ? '<span class="wbadge loss">LOST</span>' : '';
+    const fixBtns = i => DEMO ? '' :
+      '<span class="ptfix" onclick="event.stopPropagation()">' +
+      '<button class="ghost sm" style="padding:3px 8px;font-size:10px" onclick="correctPoint(' + i + ',\'my_team\')">won</button>' +
+      '<button class="ghost sm" style="padding:3px 8px;font-size:10px" onclick="correctPoint(' + i + ',\'opp_team\')">lost</button></span>';
     note += '<div class="outcomes">' + outs.map((o, i) => {
       const ev2 = ev && ev.rallies && ev.rallies[i];
       return '<div class="orow"><span class="oidx">' + String(i+1).padStart(2,'0') + '</span>' +
         '<span class="oinfo">' + (ev2 ? ev2.hits + ' hits' : 'rally ' + (i+1)) +
         (o.server && o.server !== 'unknown' ? ' · ' + (isMyTeam(o.server) ? playerName(o.server) + ' served' : 'opp. served') : '') + '</span>' +
-        (o.unforced_error ? '<span class="wbadge ue">UE</span>' : '') + badge(o) + '</div>';
+        (o.unforced_error ? '<span class="wbadge ue">UE</span>' : '') + badge(o) +
+        (o.corrected ? '<span class="wbadge" style="background:var(--dim)">fixed</span>' : '') + fixBtns(i) + '</div>';
     }).join('') + '</div>';
   }
   const hbp = pt.hits_by_player || {};
@@ -1340,6 +1361,10 @@ function renderShots(sh) {
   if (sh.serves_measured) {
     cards += statCard(sh.avg_serve_depth_from_baseline_ft + '<small> ft</small>', 'avg serve dist from baseline') +
              statCard(sh.deep_serve_pct + '<small>%</small>', 'deep serves');
+  }
+  if (sh.avg_shot_mph != null) {
+    cards += statCard(sh.avg_shot_mph + '<small> mph</small>', 'avg shot speed') +
+             statCard(sh.top_shot_mph + '<small> mph</small>', 'top shot speed');
   }
   cards += statCard(Math.round((sh.ball && sh.ball.coverage || 0) * 100) + '<small>%</small>', 'ball track coverage');
   $('shotStats').innerHTML = cards;
@@ -1408,6 +1433,19 @@ function drawShotHeatmap(shots) {
     esc(t) + '</span>').join('');
 }
 
+async function loadSynergy() {
+  const card = $('synergyCard');
+  if (DEMO) { card.style.display = 'none'; return; }
+  let syn;
+  try { syn = await api('/session/' + sid + '/synergy'); } catch (e) { card.style.display = 'none'; return; }
+  if (!syn || !syn.available) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('synergyStats').innerHTML =
+    statCard(syn.avg_separation_ft + '<small> ft</small>', 'avg separation') +
+    statCard(syn.min_separation_ft + '<small> ft</small>', 'closest moment') +
+    statCard(syn.coverage_overlap_pct + '<small>%</small>', 'coverage overlap');
+  animateStats($('synergyStats'));
+}
 async function loadBallTrajectory(sh) {
   const card = $('ballTrajCard');
   const bounces = (sh && sh.bounces_px) || [];
@@ -1450,11 +1488,37 @@ function renderRallies(ev) {
     statCard(ev.avg_rally_seconds + '<small> s</small>', 'avg rally length') +
     statCard(ev.play_time_pct + '<small>%</small>', 'time in play');
   animateStats($('rallyStats'));
+  const notes = (lastSession && lastSession.meta && lastSession.meta.clip_notes) || {};
   list.innerHTML = ev.rallies.map((r, i) =>
     '<div class="rally" id="rallyRow' + i + '" onclick="playClip(' + i + ')">' +
       '<span class="idx">' + String(i+1).padStart(2,'0') + '</span>' +
       '<span class="info">' + r.hits + ' hits <span class="dur">· ' + r.duration + ' s · at ' + fmtClock(r.start) + '</span></span>' +
-      '<span class="play">▶ watch</span></div>').join('');
+      '<span class="play">▶ watch</span></div>' +
+    '<div class="clipnote" onclick="event.stopPropagation()">' +
+      '<input id="clipNote' + i + '" placeholder="note on this rally…" value="' + esc(notes[i] || '') + '" ' +
+        'onchange="saveClipNote(' + i + ')" style="width:100%;font-size:12px">' +
+    '</div>').join('');
+}
+async function saveClipNote(i) {
+  if (DEMO) { toast('Clip notes need the live backend'); return; }
+  const note = $('clipNote' + i).value;
+  try {
+    await api('/session/' + sid + '/clip/' + i + '/note', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note }) });
+    if (lastSession && lastSession.meta) lastSession.meta.clip_notes = { ...(lastSession.meta.clip_notes || {}), [i]: note };
+    toast('Note saved');
+  } catch (e) { toast('Save failed: ' + e, true); }
+}
+async function correctPoint(idx, winner) {
+  if (DEMO) { toast('Correcting points needs the live backend'); return; }
+  try {
+    await api('/session/' + sid + '/points/' + idx, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ winner }) });
+    toast('Rally ' + (idx + 1) + ' updated');
+    openSession(sid);
+  } catch (e) { toast('Correction failed: ' + e, true); }
 }
 function fmtClock(s){ const m = Math.floor(s/60); return m + ':' + String(Math.floor(s%60)).padStart(2,'0'); }
 function playClip(i) {
@@ -1628,10 +1692,19 @@ async function loadHeadToHead() {
   catch (e) { box.style.display = 'none'; return; }
   if (!h || h.matches < 2) { box.style.display = 'none'; return; }  // 1 match = this session itself
   box.style.display = 'block';
-  box.innerHTML = '<div class="caveat" style="display:flex">' +
+  let html = '<div class="caveat" style="display:flex">' +
     '<span>Head-to-head vs <b>' + esc(name) + '</b>: <b>' + h.wins + '-' + h.losses + '</b>' +
     (h.win_pct != null ? ' (' + h.win_pct + '% win rate' : '') + (h.win_pct != null ? ') across ' : ' across ') +
     h.matches + ' session' + (h.matches === 1 ? '' : 's') + '</span></div>';
+  try {
+    const sc = await api('/opponents/' + encodeURIComponent(name) + '/scouting');
+    if (sc && sc.dominant_side && sc.shots_tracked >= 3) {
+      html += '<div class="caveat" style="display:flex;margin-top:6px">' +
+        '<span>Scouting: <b>' + sc.dominant_side_pct + '%</b> of their tracked shots land <b>' + esc(sc.dominant_side) +
+        '</b> (' + sc.shots_tracked + ' shots tracked across ' + h.matches + ' sessions)</span></div>';
+    }
+  } catch (e) {}
+  box.innerHTML = html;
 }
 async function doReupload() {
   const f = $('mReuploadFile').files[0];
@@ -1869,6 +1942,10 @@ async function loadSessionsPage() {
 }
 
 /* ---------------- Trash ---------------- */
+function exportSessionsCsv() {
+  if (DEMO) { toast('CSV export needs the live backend'); return; }
+  window.open('/api/sessions/export.csv', '_blank');
+}
 async function openTrash() {
   const card = $('trashCard');
   const opening = card.style.display === 'none';
@@ -1899,6 +1976,7 @@ async function loadTrendsPage() {
   let pts;
   try { pts = await api('/progress'); } catch (e) { return; }
   loadLeaderboard();
+  loadStreak();
   if (!pts.length) {
     $('trendSummary').innerHTML = '<div class="empty">Complete a session to build your trends.</div>';
     $('trendChartBig').innerHTML = ''; $('trendTableBig').innerHTML = ''; return;
@@ -1968,6 +2046,18 @@ async function loadLeaderboard() {
       '<td class="dupr">' + (r.best_band != null ? '~' + r.best_band : '—') + '</td>' +
       '<td class="num">' + (r.win_pct != null ? r.win_pct + '%' : '—') + '</td></tr>').join('') +
     '</table>';
+}
+async function loadStreak() {
+  let s;
+  try { s = await api('/streak'); } catch (e) { return; }
+  const card = $('streakCard');
+  if (!s || !s.days_played) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('streakStats').innerHTML =
+    statCard(s.current_streak_days + '<small> day' + (s.current_streak_days === 1 ? '' : 's') + '</small>', 'current streak') +
+    statCard(s.longest_streak_days + '<small> day' + (s.longest_streak_days === 1 ? '' : 's') + '</small>', 'longest streak') +
+    statCard(s.sessions_this_week, 'sessions this week');
+  animateStats($('streakStats'));
 }
 
 /* ---------------- trend ---------------- */

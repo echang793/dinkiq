@@ -18,6 +18,23 @@ HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
 # screen-speed thresholds as fraction of court pixel width per second
 DRIVE_SPEED = 1.8
 DINK_SPEED = 0.7
+FT_S_PER_MPH = 1.46667  # 5280/3600
+# fastest verified competitive paddle-sport shots sit well under this; a
+# classical motion-blob ball detector occasionally locks onto a false
+# positive for one frame, producing a huge apparent px/frame jump — treat
+# anything above as a tracking glitch rather than a real shot speed (same
+# reasoning as metrics.py's MAX_SPEED_FT_S position-glitch clip)
+MAX_PLAUSIBLE_MPH = 75.0
+
+
+def mph_from_norm(speed_norm: float | None) -> float | None:
+    """Normalized ball speed (court-widths/s) -> real mph, using the court's
+    known 20 ft width as the pixel-to-feet scale. None if implausible (see
+    MAX_PLAUSIBLE_MPH) — a tracking-glitch speed is worse than no number."""
+    if speed_norm is None:
+        return None
+    mph = round(speed_norm * COURT_W / FT_S_PER_MPH, 1)
+    return mph if mph <= MAX_PLAUSIBLE_MPH else None
 
 
 def _court_px_width(corners_px: list[list[float]]) -> float:
@@ -110,10 +127,47 @@ def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
     }
 
 
+def opponent_shot_landings(hit_times: np.ndarray, hitters: list[str],
+                           bounces_court: pd.DataFrame, label: str = "opponent1") -> list[dict]:
+    """Where a given opponent's shots landed, from the first tracked bounce
+    after each of their hits — same lookup pattern as serve_metrics, just
+    keyed off the general hitter attribution instead of rally starts."""
+    landings = []
+    for i, h in enumerate(hitters):
+        if h != label:
+            continue
+        t0 = float(hit_times[i])
+        b = bounces_court[(bounces_court["t"] > t0) & (bounces_court["t"] < t0 + 2.5)]
+        if not len(b):
+            continue
+        first = b.sort_values("t").iloc[0]
+        landings.append({"t": round(t0, 2), "x": round(float(first["x"]), 1),
+                         "y": round(float(first["y"]), 1), "side": serve_side(float(first["x"]))})
+    return landings
+
+
+def opponent_shot_report(hit_times: np.ndarray, hitters: list[str],
+                         bounces_court: pd.DataFrame) -> dict:
+    landings = opponent_shot_landings(hit_times, hitters, bounces_court, "opponent1")
+    if not landings:
+        return {"shots_tracked": 0}
+    sides: dict[str, int] = {}
+    for ld in landings:
+        sides[ld["side"]] = sides.get(ld["side"], 0) + 1
+    dominant = max(sides, key=sides.get)
+    return {
+        "shots_tracked": len(landings),
+        "side_counts": sides,
+        "dominant_side": dominant,
+        "dominant_side_pct": round(100.0 * sides[dominant] / len(landings), 1),
+        "landings": landings,
+    }
+
+
 def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFrame,
                 ball_stats: dict, pos: pd.DataFrame, rallies: list[dict],
                 corners_px: list[list[float]], bounces_court: pd.DataFrame,
-                fps: float) -> dict:
+                fps: float, hitters: list[str] | None = None) -> dict:
     if ball_stats.get("coverage", 0.0) < MIN_COVERAGE:
         return {"available": False,
                 "reason": f"ball track coverage {ball_stats.get('coverage', 0):.0%} "
@@ -129,12 +183,22 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
         norm = sp / width_px if sp is not None else None
         p = subject_pos_at(pos, float(t))
         shot = {"t": round(float(t), 2),
-               "type": classify_shot(norm, subject_net_dist_at(pos, float(t)))}
+               "type": classify_shot(norm, subject_net_dist_at(pos, float(t))),
+               "mph": mph_from_norm(norm)}
         if p is not None:
             shot["x"], shot["y"] = round(p[0], 1), round(p[1], 1)
         shots.append(shot)
     mix: dict[str, int] = {}
     for s in shots:
         mix[s["type"]] = mix.get(s["type"], 0) + 1
-    return {"available": True, "ball": ball_stats, "shots": shots, "shot_mix": mix,
-            **serve_metrics(rallies, subject_hits, hit_times, bounces_court)}
+    speeds = [s["mph"] for s in shots if s["mph"] is not None]
+    speed_stats = {
+        "avg_shot_mph": round(float(np.mean(speeds)), 1) if speeds else None,
+        "top_shot_mph": round(float(max(speeds)), 1) if speeds else None,
+    }
+    report = {"available": True, "ball": ball_stats, "shots": shots, "shot_mix": mix,
+             **speed_stats,
+             **serve_metrics(rallies, subject_hits, hit_times, bounces_court)}
+    if hitters is not None:
+        report["opponent_shots"] = opponent_shot_report(hit_times, hitters, bounces_court)
+    return report

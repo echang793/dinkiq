@@ -8,8 +8,9 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from shots import (ball_speed_at, classify_shot, serve_metrics, serve_side,
-                   shot_report, subject_pos_at)
+from shots import (ball_speed_at, classify_shot, mph_from_norm,
+                   opponent_shot_landings, opponent_shot_report, serve_metrics,
+                   serve_side, shot_report, subject_pos_at)
 
 FPS = 30.0
 CORNERS = [[300.0, 150.0], [1000.0, 150.0], [1250.0, 700.0], [50.0, 700.0]]
@@ -87,9 +88,68 @@ def test_shot_report_includes_position_when_available():
     assert rep["shots"][0]["x"] == 9.0 and rep["shots"][0]["y"] == 16.0
 
 
+def test_mph_from_norm():
+    assert mph_from_norm(None) is None
+    assert mph_from_norm(1.0) == round(20.0 / 1.46667, 1)
+    assert mph_from_norm(50.0) is None  # 50 court-widths/s -> ~682mph, a tracking glitch
+
+
+def test_shot_report_includes_mph():
+    rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
+    hits = np.array([1.0])
+    mine = np.array([True])
+    frames = np.arange(60)
+    ball = pd.DataFrame({"frame": frames, "x": frames * 10.0, "y": 300.0, "seg": 0})
+    pos = pd.DataFrame({"t": [0.9, 1.0, 1.1], "x": [8.0, 9.0, 10.0], "y": [15.0, 16.0, 17.0]})
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS)
+    # width_px for CORNERS is 950 (avg of the two baselines); speed is 300 px/s
+    expected = mph_from_norm(300.0 / 950.0)
+    assert expected is not None
+    assert rep["shots"][0]["mph"] == expected
+    assert rep["avg_shot_mph"] == expected
+    assert rep["top_shot_mph"] == expected
+
+
+def test_opponent_shot_landings_and_report():
+    hit_times = np.array([1.0, 2.0, 3.0])
+    hitters = ["subject", "opponent1", "opponent1"]
+    bounces = pd.DataFrame({"x": [5.0, 15.0], "y": [10.0, 30.0], "t": [2.3, 3.2]})
+    landings = opponent_shot_landings(hit_times, hitters, bounces, "opponent1")
+    assert landings == [
+        {"t": 2.0, "x": 5.0, "y": 10.0, "side": "left"},
+        {"t": 3.0, "x": 15.0, "y": 30.0, "side": "right"},
+    ]
+    rep = opponent_shot_report(hit_times, hitters, bounces)
+    assert rep["shots_tracked"] == 2
+    assert rep["side_counts"] == {"left": 1, "right": 1}
+    assert rep["dominant_side"] == "left"
+    assert rep["dominant_side_pct"] == 50.0
+
+
+def test_opponent_shot_report_empty_when_no_hits():
+    rep = opponent_shot_report(np.array([]), [], pd.DataFrame(columns=["x", "y", "t"]))
+    assert rep == {"shots_tracked": 0}
+
+
+def test_shot_report_with_hitters_adds_opponent_shots():
+    rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
+    hits = np.array([1.0])
+    mine = np.array([True])
+    frames = np.arange(60)
+    ball = pd.DataFrame({"frame": frames, "x": frames * 10.0, "y": 300.0, "seg": 0})
+    pos = pd.DataFrame({"t": [0.9, 1.0, 1.1], "x": [8.0, 9.0, 10.0], "y": [15.0, 16.0, 17.0]})
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS, hitters=["subject"])
+    assert rep["opponent_shots"] == {"shots_tracked": 0}
+
+
 if __name__ == "__main__":
     for fn in [test_classify_rules, test_ball_speed_at, test_low_coverage_degrades,
                test_serve_depth, test_serve_placement_recorded, test_serve_side_thirds,
-               test_subject_pos_at, test_shot_report_includes_position_when_available]:
+               test_subject_pos_at, test_shot_report_includes_position_when_available,
+               test_mph_from_norm, test_shot_report_includes_mph,
+               test_opponent_shot_landings_and_report, test_opponent_shot_report_empty_when_no_hits,
+               test_shot_report_with_hitters_adds_opponent_shots]:
         fn()
         print(f"ok {fn.__name__}")

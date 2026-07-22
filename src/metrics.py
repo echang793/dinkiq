@@ -38,6 +38,44 @@ def _smooth(series: pd.Series, window: int = 5) -> pd.Series:
     return series.rolling(window, center=True, min_periods=1).median()
 
 
+SYNERGY_BUCKET_S = 1.0  # coarse enough to tolerate independent stitching gaps
+
+
+def synergy_report(subject_pos: pd.DataFrame, partner_pos: pd.DataFrame) -> dict:
+    """Doubles partner positioning: how far apart the pair plays and how
+    much of the court they cover redundantly, from each player's own
+    court-projected positions (median-bucketed to a common time grid since
+    the two tracks aren't sampled at identical timestamps)."""
+    if not len(subject_pos) or not len(partner_pos):
+        return {"available": False, "reason": "insufficient tracking for one or both players"}
+
+    def bucketed(df: pd.DataFrame) -> pd.DataFrame:
+        b = (df["t"] // SYNERGY_BUCKET_S).astype(int)
+        return df.assign(bucket=b).groupby("bucket")[["x", "y"]].median()
+
+    sb, pb = bucketed(subject_pos), bucketed(partner_pos)
+    common = sb.index.intersection(pb.index)
+    if not len(common):
+        return {"available": False, "reason": "no overlapping tracked time between players"}
+    sep = np.hypot(sb.loc[common, "x"] - pb.loc[common, "x"],
+                   sb.loc[common, "y"] - pb.loc[common, "y"])
+
+    def cells(df: pd.DataFrame) -> set[tuple[int, int]]:
+        gx = np.clip((df["x"] / CELL_FT).astype(int), 0, GRID_W - 1)
+        gy = np.clip((df["y"] / CELL_FT).astype(int), 0, GRID_L - 1)
+        return set(zip(gy.tolist(), gx.tolist()))
+
+    sc, pc = cells(subject_pos), cells(partner_pos)
+    union = sc | pc
+    return {
+        "available": True,
+        "samples": int(len(common)),
+        "avg_separation_ft": round(float(sep.mean()), 1),
+        "min_separation_ft": round(float(sep.min()), 1),
+        "coverage_overlap_pct": round(100.0 * len(sc & pc) / len(union), 1) if union else None,
+    }
+
+
 def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
                     secondary_court_tracks: int = 0) -> dict:
     if len(pos) < fps * 2:

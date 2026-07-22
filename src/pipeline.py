@@ -334,7 +334,8 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
 def shots_stage(sdir: Path, calib: CourtCalibration,
                 pos: pd.DataFrame, hit_times, subject_hits, rallies,
                 corners_px: list[list[float]],
-                ball: pd.DataFrame, ball_stats: dict) -> pd.DataFrame:
+                ball: pd.DataFrame, ball_stats: dict,
+                hitters: list[str] | None = None) -> pd.DataFrame:
     """M3: bounces, shot classification, serve depth (ball track prebuilt).
 
     Returns bounces_court (court-feet coords) so the points stage can reuse
@@ -352,7 +353,7 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
         bounces_court = pd.DataFrame(columns=["x", "y", "t"])
 
     report = shot_report(hit_times, subject_hits, ball, ball_stats, pos,
-                         rallies, corners_px, bounces_court, FPS)
+                         rallies, corners_px, bounces_court, FPS, hitters=hitters)
     # pixel-space bounce points (pre-projection) for the results-screen
     # trajectory overlay — capped so the JSON payload stays small
     BOUNCE_OVERLAY_CAP = 150
@@ -487,7 +488,8 @@ def analyze(sdir: Path) -> None:
 
         set_status(sdir, "shots", "running")
         bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
-                                    calib_data["corners_px"], ball, ball_stats)
+                                    calib_data["corners_px"], ball, ball_stats,
+                                    hitters=hitters)
 
         set_status(sdir, "points", "running")
         shots_report = json.loads((sdir / "shots.json").read_text())
