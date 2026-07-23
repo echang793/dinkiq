@@ -21,6 +21,30 @@ MAX_JUMP_PX = 120      # max per-frame travel (720p, 30fps)
 MIN_TRACK_LEN = 5      # shorter linked runs are noise
 MAX_GAP_FRAMES = 3     # allow short detection dropouts within a track
 
+# color-plausibility gate: pickleballs are small bright objects (optic
+# yellow/green/orange, occasionally white) -- reject dark blobs outright
+# (shadows, dark clothing edges, wood-grain patches that happen to pass the
+# size/shape checks), and reject saturated blobs whose hue doesn't match a
+# ball color (skin tone, a jersey). Low-saturation bright blobs are never
+# hue-checked: compression/motion blur routinely washes out the true color,
+# and pickleballs legitimately come in white too -- err toward not
+# rejecting a real ball over cutting more false positives.
+MIN_BALL_V = 140
+BALL_SAT_GATE = 60
+BALL_HUE_LO, BALL_HUE_HI = 20, 100  # OpenCV hue 0-179: yellow(30) through green(60) to cyan-ish
+
+
+def _ball_colored(frame: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
+    crop = frame[max(0, y):y + h, max(0, x):x + w]
+    if crop.size == 0:
+        return False
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    if float(np.median(hsv[:, :, 2])) < MIN_BALL_V:
+        return False
+    if float(np.median(hsv[:, :, 1])) < BALL_SAT_GATE:
+        return True  # bright + washed-out: still plausible (white ball, blur)
+    return BALL_HUE_LO <= float(np.median(hsv[:, :, 0])) <= BALL_HUE_HI
+
 
 class BallDetector:
     """Frame-wise ball-candidate detector for single-decode integration.
@@ -59,6 +83,8 @@ class BallDetector:
                           (boxes[:, 1] - 5 <= cy) & (cy <= boxes[:, 3] + 5))
                 if inside.any():
                     continue
+            if not _ball_colored(frame, x, y, w, h):
+                continue
             self.candidates.append((frame_idx, cx, cy, area))
 
 

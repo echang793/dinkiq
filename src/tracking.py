@@ -13,7 +13,7 @@ from ultralytics import YOLO
 
 from court import NET_Y, CourtCalibration, on_court
 
-MODEL_NAME = "yolov8n-pose.pt"
+MODEL_NAME = "yolov8s-pose.pt"
 # COCO keypoint indices
 KP_LWRIST, KP_RWRIST = 9, 10
 

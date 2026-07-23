@@ -10,7 +10,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from ball import detect_bounces, link_tracks, run_ball_tracking
+from ball import BallDetector, detect_bounces, link_tracks, run_ball_tracking
 
 FPS = 30
 W, H = 1280, 720
@@ -59,6 +59,26 @@ def test_tracks_and_bounces():
         assert (bounces["y"] > 550).any(), bounces
 
 
+def test_ball_detector_color_gate_accepts_bright_rejects_dark():
+    # dark, static background -- gives MOG2 a stable model before the ball appears
+    bg = np.full((200, 200, 3), 40, dtype=np.uint8)
+    det_yellow, det_gray = BallDetector(), BallDetector()
+    for f in range(15):
+        det_yellow.update(f, bg.copy())
+        det_gray.update(f, bg.copy())
+
+    yellow_frame = bg.copy()
+    cv2.circle(yellow_frame, (100, 100), 6, (0, 255, 255), -1)  # BGR yellow: bright + saturated
+    gray_frame = bg.copy()
+    cv2.circle(gray_frame, (100, 100), 6, (90, 90, 90), -1)     # same size/shape, too dark
+
+    det_yellow.update(15, yellow_frame)
+    det_gray.update(15, gray_frame)
+
+    assert any(f == 15 for f, *_ in det_yellow.candidates), det_yellow.candidates
+    assert not any(f == 15 for f, *_ in det_gray.candidates), det_gray.candidates
+
+
 def test_link_ignores_isolated_noise():
     # 3 isolated single-frame blips + one real 8-frame run
     cands = [(0, 500, 500, 20), (10, 900, 100, 20), (20, 30, 30, 20)]
@@ -69,6 +89,7 @@ def test_link_ignores_isolated_noise():
 
 
 if __name__ == "__main__":
-    for fn in [test_tracks_and_bounces, test_link_ignores_isolated_noise]:
+    for fn in [test_tracks_and_bounces, test_ball_detector_color_gate_accepts_bright_rejects_dark,
+              test_link_ignores_isolated_noise]:
         fn()
         print(f"ok {fn.__name__}")
