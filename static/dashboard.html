@@ -461,7 +461,7 @@
   <section class="screen on" id="home">
     <div class="card">
       <h2>New session</h2>
-      <div id="focusReminder" class="coach" style="display:none;margin-bottom:12px"></div>
+      <div id="focusReminder" style="display:none;margin-bottom:12px"></div>
       <div class="matchseg" role="group" aria-label="Match type">
         <button type="button" class="on" id="matchSingles" onclick="setMatchType('singles')">Singles</button>
         <button type="button" id="matchDoubles" onclick="setMatchType('doubles')">Doubles</button>
@@ -2196,10 +2196,19 @@ async function loadFocusReminder() {
   let pts;
   try { pts = await api('/progress'); } catch (e) { box.style.display = 'none'; return; }
   const last = pts[pts.length - 1];
-  if (!last || !last.weakest_label) { box.style.display = 'none'; return; }
-  box.style.display = 'flex';
-  box.innerHTML = tipSVG + '<span>Last time: work on <b>' + esc(last.weakest_label) +
-    '</b> — that was your weakest area in your most recent rated session.</span>';
+  const dims = (last && last.dimensions) || {};
+  // 3.5 mirrors feedback.WEAK_BAND -- same cutoff the drills/tips already use,
+  // so this checklist always agrees with what the last session's coach panel flagged
+  const weak = Object.values(dims).filter(d => d.band < 3.5).sort((a, b) => a.band - b.band).slice(0, 3);
+  if (!weak.length) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  box.innerHTML = '<div class="mut" style="font-size:12px;margin-bottom:6px">Before you start — focus areas from your last session:</div>' +
+    weak.map(d => {
+      const target = d.next_target_value != null
+        ? ' — reach ' + d.next_target_value + (d.unit || '') + ' for the next tier (' + d.next_target_band.toFixed(2) + ')'
+        : '';
+      return '<div class="coach">' + tipSVG + '<span>Work on <b>' + esc(d.label) + '</b>' + target + '</span></div>';
+    }).join('');
 }
 async function loadTrend() {
   let pts;
