@@ -79,6 +79,27 @@ def test_ball_detector_color_gate_accepts_bright_rejects_dark():
     assert not any(f == 15 for f, *_ in det_gray.candidates), det_gray.candidates
 
 
+def test_ball_detector_accepts_non_yellow_balls_rejects_blue():
+    # pickleballs are sold in yellow, orange, red/pink, green, and white --
+    # yellow is just the common one, not the only real one. Any of those
+    # must pass same as yellow; blue (court paint, jerseys, sky) is the one
+    # hue family the gate denylists as a false-positive source.
+    bg = np.full((200, 200, 3), 40, dtype=np.uint8)
+    colors_bgr = {"orange": (0, 140, 255), "red": (0, 0, 255), "blue": (255, 0, 0)}
+    dets = {name: BallDetector() for name in colors_bgr}
+    for f in range(15):
+        for det in dets.values():
+            det.update(f, bg.copy())
+    for name, bgr in colors_bgr.items():
+        frame = bg.copy()
+        cv2.circle(frame, (100, 100), 6, bgr, -1)
+        dets[name].update(15, frame)
+
+    assert any(f == 15 for f, *_ in dets["orange"].candidates), dets["orange"].candidates
+    assert any(f == 15 for f, *_ in dets["red"].candidates), dets["red"].candidates
+    assert not any(f == 15 for f, *_ in dets["blue"].candidates), dets["blue"].candidates
+
+
 def test_detect_cuts_finds_hard_scene_change():
     with tempfile.TemporaryDirectory() as td:
         vid = Path(td) / "cut.mp4"
@@ -105,6 +126,7 @@ def test_link_ignores_isolated_noise():
 
 if __name__ == "__main__":
     for fn in [test_tracks_and_bounces, test_ball_detector_color_gate_accepts_bright_rejects_dark,
+              test_ball_detector_accepts_non_yellow_balls_rejects_blue,
               test_detect_cuts_finds_hard_scene_change, test_link_ignores_isolated_noise]:
         fn()
         print(f"ok {fn.__name__}")

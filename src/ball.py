@@ -21,17 +21,19 @@ MAX_JUMP_PX = 120      # max per-frame travel (720p, 30fps)
 MIN_TRACK_LEN = 5      # shorter linked runs are noise
 MAX_GAP_FRAMES = 3     # allow short detection dropouts within a track
 
-# color-plausibility gate: pickleballs are small bright objects (optic
-# yellow/green/orange, occasionally white) -- reject dark blobs outright
-# (shadows, dark clothing edges, wood-grain patches that happen to pass the
-# size/shape checks), and reject saturated blobs whose hue doesn't match a
-# ball color (skin tone, a jersey). Low-saturation bright blobs are never
-# hue-checked: compression/motion blur routinely washes out the true color,
-# and pickleballs legitimately come in white too -- err toward not
-# rejecting a real ball over cutting more false positives.
+# color-plausibility gate: pickleballs are small bright objects, but they're
+# sold in yellow, orange, green, pink/red, and white -- nearly the whole hue
+# wheel. An allowlist tuned to one clip's ball color silently rejects every
+# other real color, so this denylists the outlier instead: blue/purple/teal,
+# the one hue family that's a common false-positive source (indoor court
+# paint, jerseys, sky in outdoor footage) and not a real ball color. Reject
+# dark blobs outright (shadows, dark clothing edges, wood-grain patches that
+# pass the size/shape checks). Low-saturation bright blobs skip the hue check
+# entirely: compression/motion blur routinely washes out the true color, and
+# white balls are real -- err toward not rejecting a real ball.
 MIN_BALL_V = 140
 BALL_SAT_GATE = 60
-BALL_HUE_LO, BALL_HUE_HI = 20, 100  # OpenCV hue 0-179: yellow(30) through green(60) to cyan-ish
+BALL_REJECT_HUE_LO, BALL_REJECT_HUE_HI = 95, 150  # OpenCV hue 0-179: blue/purple/teal
 
 
 def _ball_colored(frame: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
@@ -43,7 +45,8 @@ def _ball_colored(frame: np.ndarray, x: int, y: int, w: int, h: int) -> bool:
         return False
     if float(np.median(hsv[:, :, 1])) < BALL_SAT_GATE:
         return True  # bright + washed-out: still plausible (white ball, blur)
-    return BALL_HUE_LO <= float(np.median(hsv[:, :, 0])) <= BALL_HUE_HI
+    h_med = float(np.median(hsv[:, :, 0]))
+    return not (BALL_REJECT_HUE_LO <= h_med <= BALL_REJECT_HUE_HI)
 
 
 class BallDetector:
