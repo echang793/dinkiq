@@ -383,6 +383,24 @@ def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
     (sdir / "points.json").write_text(json.dumps({"outcomes": outcomes, **summary}))
 
 
+def ensure_cuts(sdir: Path, video: Path, stride: int) -> int:
+    """Camera-cut count for confidence scoring (metrics.py docks confidence
+    above CutDetector.CORR_THRESHOLD-triggered cuts). cuts.json is written
+    once during a session's first (fresh-tracking) analysis, for free, as a
+    byproduct of that decode -- and it's calibration-independent, so cached-
+    track recalibrations correctly never need to redo it. But a session
+    whose cuts.json is missing (predates cut detection, or an interrupted
+    first run) would otherwise read back a silent, permanent default of 0
+    every time (cached-track analysis never re-derives it). Self-heal that
+    one case with a standalone decode; every other call is a free file read.
+    """
+    cuts_f = sdir / "cuts.json"
+    if not cuts_f.exists():
+        from ball import detect_cuts
+        cuts_f.write_text(json.dumps({"cut_frames": detect_cuts(video, stride=stride)}))
+    return len(json.loads(cuts_f.read_text())["cut_frames"])
+
+
 def analyze(sdir: Path) -> None:
     """Track players, project subject positions, compute metrics.
 
@@ -487,8 +505,7 @@ def analyze(sdir: Path) -> None:
             all_ids = exclude_ids | opponent_ids
             secondary_court_tracks = count_secondary_court_tracks(tracks, calib, all_ids)
 
-        cuts_f = sdir / "cuts.json"
-        n_cuts = len(json.loads(cuts_f.read_text())["cut_frames"]) if cuts_f.exists() else 0
+        n_cuts = ensure_cuts(sdir, sdir / "video.mp4", TRACK_STRIDE)
         m = compute_metrics(pos, FPS, camera_cuts=n_cuts,
                             secondary_court_tracks=secondary_court_tracks)
         m["match_type"] = match_type

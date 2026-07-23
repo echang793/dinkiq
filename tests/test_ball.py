@@ -10,7 +10,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from ball import BallDetector, detect_bounces, link_tracks, run_ball_tracking
+from ball import BallDetector, detect_bounces, detect_cuts, link_tracks, run_ball_tracking
 
 FPS = 30
 W, H = 1280, 720
@@ -79,6 +79,21 @@ def test_ball_detector_color_gate_accepts_bright_rejects_dark():
     assert not any(f == 15 for f, *_ in det_gray.candidates), det_gray.candidates
 
 
+def test_detect_cuts_finds_hard_scene_change():
+    with tempfile.TemporaryDirectory() as td:
+        vid = Path(td) / "cut.mp4"
+        vw = cv2.VideoWriter(str(vid), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (W, H))
+        court_green = np.full((H, W, 3), (60, 140, 60), dtype=np.uint8)
+        crowd_gray = np.full((H, W, 3), (150, 150, 150), dtype=np.uint8)
+        for f in range(60):
+            vw.write(court_green if f < 30 else crowd_gray)  # hard cut at frame 30
+        vw.release()
+
+        cuts = detect_cuts(vid)
+        assert cuts, "expected at least one detected cut"
+        assert any(abs(c - 30) <= 2 for c in cuts), cuts
+
+
 def test_link_ignores_isolated_noise():
     # 3 isolated single-frame blips + one real 8-frame run
     cands = [(0, 500, 500, 20), (10, 900, 100, 20), (20, 30, 30, 20)]
@@ -90,6 +105,6 @@ def test_link_ignores_isolated_noise():
 
 if __name__ == "__main__":
     for fn in [test_tracks_and_bounces, test_ball_detector_color_gate_accepts_bright_rejects_dark,
-              test_link_ignores_isolated_noise]:
+              test_detect_cuts_finds_hard_scene_change, test_link_ignores_isolated_noise]:
         fn()
         print(f"ok {fn.__name__}")

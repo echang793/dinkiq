@@ -33,6 +33,36 @@ def test_events_uses_real_video_duration_not_tracked_frames(tmp_path, monkeypatc
     assert ev["play_time_pct"] == 0.6
 
 
+def test_ensure_cuts_self_heals_when_missing(tmp_path, monkeypatch):
+    """A session whose cuts.json never got written (legacy session, or an
+    interrupted first analysis) must not silently read back a permanent
+    camera_cuts=0 -- ensure_cuts should recompute it from the video."""
+    calls = []
+
+    def fake_detect_cuts(video, stride):
+        calls.append((video, stride))
+        return [5, 40]
+
+    monkeypatch.setattr("ball.detect_cuts", fake_detect_cuts)
+    n = pipeline.ensure_cuts(tmp_path, tmp_path / "video.mp4", stride=2)
+    assert n == 2
+    assert calls == [(tmp_path / "video.mp4", 2)]
+    assert json.loads((tmp_path / "cuts.json").read_text())["cut_frames"] == [5, 40]
+
+
+def test_ensure_cuts_reuses_existing_without_redecoding(tmp_path, monkeypatch):
+    """cuts.json is calibration-independent -- once written it must never
+    trigger a second (wasted) video decode on a later cached-track reprocess."""
+    (tmp_path / "cuts.json").write_text(json.dumps({"cut_frames": [1, 2, 3]}))
+
+    def boom(*a, **kw):
+        raise AssertionError("should not redecode when cuts.json already exists")
+
+    monkeypatch.setattr("ball.detect_cuts", boom)
+    n = pipeline.ensure_cuts(tmp_path, tmp_path / "video.mp4", stride=2)
+    assert n == 3
+
+
 def test_queue_position_reflects_order(monkeypatch, tmp_path):
     release = threading.Event()
 

@@ -114,6 +114,26 @@ class CutDetector:
         self._prev = hist
 
 
+def detect_cuts(video: Path, stride: int = 1) -> list[int]:
+    """Standalone camera-cut pass (own decode). The integrated pipeline feeds
+    CutDetector from the tracking loop's frame_cb instead (free — same decode
+    as tracking); this path is the self-heal fallback for a session whose
+    cuts.json is missing and can't be reused from a prior fresh tracking run
+    (recalibration replays cached tracks/ball, which never touches cuts.json)."""
+    cutdet = CutDetector()
+    cap = cv2.VideoCapture(str(video))
+    i = 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        if i % stride == 0:
+            cutdet.update(i, frame)
+        i += 1
+    cap.release()
+    return cutdet.cut_frames
+
+
 def detect_candidates(video: Path, exclude_boxes: pd.DataFrame | None = None):
     """Standalone per-frame candidate pass (own decode). The integrated
     pipeline uses BallDetector inside the tracking loop instead; this path
