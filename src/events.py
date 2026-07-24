@@ -12,7 +12,12 @@ MIN_HIT_GAP_S = 0.25      # two paddle hits can't be closer than this
 RALLY_GAP_S = 5.0         # silence longer than this ends a rally
 MIN_RALLY_HITS = 2        # single bang (dropped paddle, door) is not a rally
 SWING_MATCH_S = 0.25      # swing peak within this window of a hit = subject's shot
-SWING_MIN_PX_S = 250.0    # wrist speed threshold (px/s at 720p) for a swing
+# court-widths/s, not raw px/s: a raw pixel threshold silently under-detects
+# swings on a camera framed wider than whatever distance this was tuned
+# against (same generalization risk shots.mph_from_norm already avoids for
+# ball speed by normalizing against the session's own court pixel width)
+REFERENCE_COURT_WIDTH_PX = 900.0  # approx. court width this threshold assumes
+SWING_MIN_NORM_S = 250.0 / REFERENCE_COURT_WIDTH_PX
 
 
 BAND_LO_HZ = 1200      # paddle pop concentrates 1-6 kHz; speech fundamentals,
@@ -73,10 +78,13 @@ def segment_rallies(hit_times: np.ndarray) -> list[dict]:
     ]
 
 
-def wrist_speed(sub: pd.DataFrame, fps: float) -> pd.DataFrame:
-    """Per-frame max wrist speed (px/s) for the subject track.
+def wrist_speed(sub: pd.DataFrame, fps: float, court_width_px: float) -> pd.DataFrame:
+    """Per-frame max wrist speed (court-widths/s) for the subject track.
 
     Keypoints at (0,0) mean the wrist wasn't detected in that frame — masked out.
+    Normalized by the session's own court pixel width (same reasoning as
+    shots.mph_from_norm) so SWING_MIN_NORM_S means the same real swing speed
+    regardless of how tightly the camera frames the court.
     """
     sub = sub.sort_values("frame").reset_index(drop=True)
     t = sub["frame"].to_numpy() / fps
@@ -93,7 +101,7 @@ def wrist_speed(sub: pd.DataFrame, fps: float) -> pd.DataFrame:
     best = np.full(len(stacked), np.nan)
     any_valid = ~np.isnan(stacked).all(axis=1)  # frames where neither wrist seen stay NaN
     best[any_valid] = np.nanmax(stacked[any_valid], axis=1)
-    return pd.DataFrame({"t": t, "speed": best})
+    return pd.DataFrame({"t": t, "speed": best / court_width_px})
 
 
 def detect_swings(ws: pd.DataFrame) -> np.ndarray:
@@ -102,7 +110,7 @@ def detect_swings(ws: pd.DataFrame) -> np.ndarray:
     t = ws["t"].to_numpy()
     swings = []
     for i in range(1, len(s) - 1):
-        if (np.isfinite(s[i]) and s[i] >= SWING_MIN_PX_S
+        if (np.isfinite(s[i]) and s[i] >= SWING_MIN_NORM_S
                 and s[i] >= np.nan_to_num(s[i - 1]) and s[i] >= np.nan_to_num(s[i + 1])
                 and (not swings or t[i] - swings[-1] > MIN_HIT_GAP_S)):
             swings.append(float(t[i]))

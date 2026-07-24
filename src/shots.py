@@ -11,7 +11,8 @@ session reports pose/audio metrics only.
 import numpy as np
 import pandas as pd
 
-from court import BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, dist_from_net, on_court
+from court import (BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, court_px_width,
+                   dist_from_net, on_court)
 
 MIN_COVERAGE = 0.15    # below this, ball track too sparse to classify anything
 HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
@@ -42,11 +43,6 @@ def mph_from_norm(speed_norm: float | None) -> float | None:
         return None
     mph = round(speed_norm * COURT_W / FT_S_PER_MPH, 1)
     return mph if mph <= MAX_PLAUSIBLE_MPH else None
-
-
-def _court_px_width(corners_px: list[list[float]]) -> float:
-    (flx, fly), (frx, fry), (nrx, nry), (nlx, nly) = corners_px
-    return (np.hypot(frx - flx, fry - fly) + np.hypot(nrx - nlx, nry - nly)) / 2.0
 
 
 def ball_speed_at(ball: pd.DataFrame, t: float, fps: float) -> float | None:
@@ -85,6 +81,18 @@ def subject_pos_at(pos: pd.DataFrame, t: float) -> tuple[float, float] | None:
     return (float(w["x"].median()), float(w["y"].median())) if len(w) else None
 
 
+def swing_speed_at(ws: pd.DataFrame, t: float) -> float | None:
+    """Subject's paddle-swing speed (mph) at hit time t, from wrist keypoint
+    velocity. `ws` (events.wrist_speed) is already normalized to court-
+    widths/s, so this is just a windowed-median lookup (same pattern as
+    subject_pos_at) + the same mph conversion ball_speed_at uses -- putting
+    swing speed on the same scale as ball speed instead of only using it to
+    detect that a swing happened at all."""
+    w = ws[(ws["t"] >= t - 0.15) & (ws["t"] <= t + 0.15)]
+    speeds = w["speed"].dropna()
+    return mph_from_norm(float(speeds.median())) if len(speeds) else None
+
+
 def serve_side(x: float) -> str:
     """Left / middle (T) / right third of the court width, receiver's view."""
     third = COURT_W / 3.0
@@ -119,7 +127,7 @@ def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
     Placement = which third of the court width it landed in (left/middle/right).
     """
     serves = []
-    for r in rallies:
+    for ri, r in enumerate(rallies):
         idx = int(np.argmin(np.abs(hit_times - r["start"])))
         if not subject_hits[idx]:
             continue  # not the subject's serve
@@ -133,7 +141,11 @@ def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
         depth = round(float(abs(baseline_y - first["y"])), 1)
         serves.append({"t": round(float(r["start"]), 2), "depth_ft": depth,
                        "x": round(float(first["x"]), 1), "y": round(float(first["y"]), 1),
-                       "side": serve_side(float(first["x"]))})
+                       "side": serve_side(float(first["x"])),
+                       # position in `rallies` -- lets points.py join a serve
+                       # back to that rally's winner (rallies/outcomes share
+                       # the same index order, see pipeline.analyze)
+                       "rally_index": ri})
     if not serves:
         return {"serves_measured": 0}
     depths = [s["depth_ft"] for s in serves]
@@ -197,14 +209,15 @@ def opponent_shot_report(hit_times: np.ndarray, hitters: list[str],
 def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFrame,
                 ball_stats: dict, pos: pd.DataFrame, rallies: list[dict],
                 corners_px: list[list[float]], bounces_court: pd.DataFrame,
-                fps: float, hitters: list[str] | None = None) -> dict:
+                fps: float, hitters: list[str] | None = None,
+                ws: pd.DataFrame | None = None) -> dict:
     if ball_stats.get("coverage", 0.0) < MIN_COVERAGE:
         return {"available": False,
                 "reason": f"ball track coverage {ball_stats.get('coverage', 0):.0%} "
                           f"below {MIN_COVERAGE:.0%} — pose/audio metrics only",
                 "ball": ball_stats}
 
-    width_px = _court_px_width(corners_px)
+    width_px = court_px_width(corners_px)
     shots = []
     for t, mine in zip(hit_times, subject_hits):
         if not mine:
@@ -215,6 +228,8 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
         shot = {"t": round(float(t), 2),
                "type": classify_shot(norm, subject_net_dist_at(pos, float(t))),
                "mph": mph_from_norm(norm)}
+        if ws is not None:
+            shot["swing_mph"] = swing_speed_at(ws, float(t))
         if p is not None:
             shot["x"], shot["y"] = round(p[0], 1), round(p[1], 1)
         shots.append(shot)
@@ -224,11 +239,15 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
     timed = [s for s in shots if s["mph"] is not None]
     speeds = [s["mph"] for s in timed]
     fastest = max(timed, key=lambda s: s["mph"]) if timed else None
+    swing_speeds = [s["swing_mph"] for s in shots if s.get("swing_mph") is not None]
     speed_stats = {
         "avg_shot_mph": round(float(np.mean(speeds)), 1) if speeds else None,
         "top_shot_mph": fastest["mph"] if fastest else None,
         # lets the UI jump straight to this shot's moment in its rally clip
         "top_shot_t": fastest["t"] if fastest else None,
+        # paddle-swing speed, distinct from ball speed -- lets a player see
+        # "am I not swinging fast enough" vs. "swing is fine, contact isn't"
+        "avg_swing_mph": round(float(np.mean(swing_speeds)), 1) if swing_speeds else None,
     }
     report = {"available": True, "ball": ball_stats, "shots": shots, "shot_mix": mix,
              **speed_stats,

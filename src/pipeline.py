@@ -24,11 +24,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from court import NET_Y, CourtCalibration
+from court import NET_Y, CourtCalibration, court_px_width
 from events import (corroborate_hits, detect_hits, detect_swings,
                     rally_metrics, segment_rallies, wrist_speed)
 from metrics import compute_metrics
-from points import MY_TEAM, attribute_hitters, point_summary, rally_outcomes
+from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
+                    serve_side_win_rates, shot_type_outcomes)
 from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject,
                       run_tracking, stitch_chain_ids, stitch_subject,
                       subject_court_positions)
@@ -269,15 +270,16 @@ def ingest(sdir: Path, raw: Path) -> None:
         set_status(sdir, "ingest", "error", _friendly_error(str(e)))
 
 
-def _player_swings(tracks: pd.DataFrame, track_id: int | None) -> np.ndarray:
+def _player_swings(tracks: pd.DataFrame, track_id: int | None, court_width_px: float) -> np.ndarray:
     if track_id is None or not len(tracks):
         return np.array([])
     chain = stitch_subject(tracks, track_id)
-    return detect_swings(wrist_speed(chain, FPS)) if len(chain) else np.array([])
+    return detect_swings(wrist_speed(chain, FPS, court_width_px)) if len(chain) else np.array([])
 
 
 def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
-          opponents: list[int], hit_times: np.ndarray | None = None,
+          opponents: list[int], corners_px: list[list[float]],
+          hit_times: np.ndarray | None = None,
           video_duration: float | None = None):
     """M2: paddle hits from audio, rallies, swings, per-rally clips.
 
@@ -302,11 +304,12 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     if hit_times is None:
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
 
-    player_swings = {"subject": _player_swings(tracks, subject)}
+    width_px = court_px_width(corners_px)
+    player_swings = {"subject": _player_swings(tracks, subject, width_px)}
     if partner is not None:
-        player_swings["partner"] = _player_swings(tracks, partner)
+        player_swings["partner"] = _player_swings(tracks, partner, width_px)
     for i, opp_id in enumerate(opponents[:2]):
-        player_swings[f"opponent{i + 1}"] = _player_swings(tracks, opp_id)
+        player_swings[f"opponent{i + 1}"] = _player_swings(tracks, opp_id, width_px)
 
     # drop audio "hits" with no matching wrist swing (warmup/pre-play noise)
     # before segmenting into rallies, so getting-ready footage isn't scored
@@ -343,7 +346,8 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
                 pos: pd.DataFrame, hit_times, subject_hits, rallies,
                 corners_px: list[list[float]],
                 ball: pd.DataFrame, ball_stats: dict,
-                hitters: list[str] | None = None) -> pd.DataFrame:
+                hitters: list[str] | None = None,
+                ws: pd.DataFrame | None = None) -> pd.DataFrame:
     """M3: bounces, shot classification, serve depth (ball track prebuilt).
 
     Returns bounces_court (court-feet coords) so the points stage can reuse
@@ -361,7 +365,7 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
         bounces_court = pd.DataFrame(columns=["x", "y", "t"])
 
     report = shot_report(hit_times, subject_hits, ball, ball_stats, pos,
-                         rallies, corners_px, bounces_court, FPS, hitters=hitters)
+                         rallies, corners_px, bounces_court, FPS, hitters=hitters, ws=ws)
     # pixel-space bounce points (pre-projection) for the results-screen
     # trajectory overlay — capped so the JSON payload stays small
     BOUNCE_OVERLAY_CAP = 150
@@ -375,11 +379,19 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
 
 
 def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
-                 bounces_court: pd.DataFrame, ball_available: bool) -> None:
-    """Rally winners + serve/return win rates from hitter attribution."""
+                 bounces_court: pd.DataFrame, ball_available: bool,
+                 shots_report: dict) -> None:
+    """Rally winners + serve/return win rates from hitter attribution, plus
+    serve-placement and shot-type breakdowns joined against shots_report --
+    two views the app already computes both halves of but never
+    cross-references (see points.serve_side_win_rates/shot_type_outcomes)."""
     outcomes = rally_outcomes(rallies, hit_times, hitters,
                               bounces_court if ball_available else None)
     summary = point_summary(outcomes, ball_available, hitters=hitters)
+    summary["serve_side_win_rates"] = serve_side_win_rates(
+        shots_report.get("serves") or [], outcomes)
+    summary["shot_type_outcomes"] = shot_type_outcomes(
+        shots_report.get("shots") or [], rallies, outcomes)
     (sdir / "points.json").write_text(json.dumps({"outcomes": outcomes, **summary}))
 
 
@@ -518,18 +530,22 @@ def analyze(sdir: Path) -> None:
         set_status(sdir, "events", "running")
         audio_thread.join(timeout=120)
         hit_times, team_hits, rallies, hitters = events(
-            sdir, tracks, subject, partner, opponents, hit_times=audio_result.get("hits"),
-            video_duration=info["duration"])
+            sdir, tracks, subject, partner, opponents, calib_data["corners_px"],
+            hit_times=audio_result.get("hits"), video_duration=info["duration"])
 
         set_status(sdir, "shots", "running")
+        subject_chain = stitch_subject(tracks, subject) if len(tracks) else pd.DataFrame()
+        ws_subject = (wrist_speed(subject_chain, FPS, court_px_width(calib_data["corners_px"]))
+                     if len(subject_chain) else pd.DataFrame(columns=["t", "speed"]))
         bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
                                     calib_data["corners_px"], ball, ball_stats,
-                                    hitters=hitters)
+                                    hitters=hitters, ws=ws_subject)
 
         set_status(sdir, "points", "running")
         shots_report = json.loads((sdir / "shots.json").read_text())
         points_stage(sdir, rallies, hit_times, hitters, bounces_court,
-                    ball_available=bool(shots_report.get("available")))
+                    ball_available=bool(shots_report.get("available")),
+                    shots_report=shots_report)
 
         set_status(sdir, "rating", "running")
         from dupr import estimate

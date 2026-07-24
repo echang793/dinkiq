@@ -68,6 +68,7 @@ def test_synergy_doubles_computes_separation_and_overlap():
         assert body["available"] is True
         assert body["avg_separation_ft"] == 5.4
         assert body["coverage_overlap_pct"] == 0.0
+        assert body["tip"] is not None and "tight" in body["tip"]  # 5.4ft < low-separation threshold
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -124,6 +125,36 @@ def test_correct_point_updates_winner_and_summary():
         assert body["points_lost"] == 0
         assert body["win_pct"] == 100.0
         assert body["hits_by_player"] == {"subject": 3, "opponent1": 2}  # preserved, not recomputed
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_correct_point_recomputes_serve_and_shot_type_breakdowns():
+    """Correcting a rally's winner must recompute serve_side_win_rates and
+    shot_type_outcomes too, not just win_pct -- both are derived from
+    outcomes[i]['winner'], the exact field a correction changes."""
+    d = _basic_session("pt_recompute")
+    (d / "events.json").write_text(json.dumps(
+        {"rallies": [{"start": 1.0, "end": 3.0}, {"start": 10.0, "end": 12.0}]}))
+    (d / "shots.json").write_text(json.dumps(
+        {"serves": [{"side": "middle", "rally_index": 0}],
+         "shots": [{"t": 12.0, "type": "drive"}]}))
+    (d / "points.json").write_text(json.dumps({
+        "outcomes": [{"server": "subject", "last_hitter": "subject",
+                     "winner": "opp_team", "unforced_error": True},
+                    {"server": "opponent1", "last_hitter": "subject",
+                     "winner": "opp_team", "unforced_error": True}],
+        "points_won": 0, "points_lost": 2, "win_pct": 0.0, "unforced_errors": 2,
+        "hits_by_player": {}}))
+    try:
+        r = client.patch(f"/api/session/{d.name}/points/0",
+                         json={"winner": "my_team", "unforced_error": False})
+        assert r.status_code == 200
+        body = r.json()
+        # rally 0's serve now credited as a win after the correction
+        assert body["serve_side_win_rates"] == {"middle": {"attempts": 1, "win_pct": 100.0}}
+        # rally 1 untouched -- still a loss
+        assert body["shot_type_outcomes"] == {"drive": {"attempts": 1, "win_pct": 0.0}}
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -232,7 +263,9 @@ def test_export_csv_contains_session_row():
 if __name__ == "__main__":
     for fn in [test_synergy_singles_session_unavailable, test_synergy_doubles_computes_separation_and_overlap,
                test_opponent_scouting_aggregates_landing_sides, test_opponent_scouting_no_matches,
-               test_correct_point_updates_winner_and_summary, test_correct_point_out_of_range_404,
+               test_correct_point_updates_winner_and_summary,
+               test_correct_point_recomputes_serve_and_shot_type_breakdowns,
+               test_correct_point_out_of_range_404,
                test_correct_point_invalid_winner_422, test_set_and_clear_clip_note,
                test_stat_card_returns_png, test_stat_card_not_ready_409,
                test_streak_response_shape, test_streak_counts_consecutive_days,

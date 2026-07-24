@@ -56,13 +56,15 @@ def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str
         idx = [i for i, t in enumerate(hit_times)
                if r["start"] - 1e-6 <= t <= r["end"] + 1e-6]
         if not idx:
-            out.append({"server": "unknown", "winner": "unknown", "unforced_error": None})
+            out.append({"server": "unknown", "last_hitter": "unknown",
+                       "winner": "unknown", "unforced_error": None})
             continue
         server = hitters[idx[0]]
         last_i = idx[-1]
         last_hitter = hitters[last_i]
         if last_hitter == "unknown" or last_hitter not in TEAM_OF:
-            out.append({"server": server, "winner": "unknown", "unforced_error": None})
+            out.append({"server": server, "last_hitter": last_hitter,
+                       "winner": "unknown", "unforced_error": None})
             continue
         other_team = "opp_team" if TEAM_OF[last_hitter] == "my_team" else "my_team"
         winner, unforced = last_hitter, False
@@ -74,7 +76,8 @@ def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str
                 b = near.sort_values("t").iloc[0]
                 if not on_court(float(b["x"]), float(b["y"]), margin=OUT_MARGIN):
                     winner, unforced = other_team, True
-        out.append({"server": server, "winner": winner, "unforced_error": unforced})
+        out.append({"server": server, "last_hitter": last_hitter,
+                   "winner": winner, "unforced_error": unforced})
     return out
 
 
@@ -114,3 +117,60 @@ def point_summary(outcomes: list[dict], ball_available: bool,
         summary["caveat"] = ("Ball tracking unavailable — winners assume the last shot "
                              "of each rally was in; unforced errors are not detected.")
     return summary
+
+
+def _win_rate_by_key(rows: list[tuple[str, str]]) -> dict:
+    """(key, winner) pairs -> {key: {attempts, win_pct}}, "unknown" winners
+    dropped. Shared tally shape for serve_side_win_rates/shot_type_outcomes."""
+    tally: dict[str, dict[str, int]] = {}
+    for key, winner in rows:
+        if winner == "unknown":
+            continue
+        t = tally.setdefault(key, {"attempts": 0, "won": 0})
+        t["attempts"] += 1
+        if TEAM_OF.get(winner, winner) == "my_team":
+            t["won"] += 1
+    return {k: {"attempts": v["attempts"], "win_pct": round(100.0 * v["won"] / v["attempts"], 1)}
+           for k, v in tally.items()}
+
+
+def serve_side_win_rates(serves: list[dict], outcomes: list[dict]) -> dict:
+    """Win rate by serve placement (left/middle/right).
+
+    shots.json already records each subject serve's side and points.json
+    already records each rally's winner, but the two are computed in
+    separate pipeline stages and never cross-referenced. Joined here via
+    each serve's rally_index (shots.serve_metrics) against the matching
+    rally_outcomes entry -- e.g. "middle serves win 70% of points vs. 45%
+    for wide serves" is a real pattern sitting in data the app already has.
+    """
+    rows = []
+    for s in serves:
+        ri = s.get("rally_index")
+        if ri is None or ri >= len(outcomes):
+            continue
+        rows.append((s["side"], outcomes[ri]["winner"]))
+    return _win_rate_by_key(rows)
+
+
+def shot_type_outcomes(shots: list[dict], rallies: list[dict], outcomes: list[dict]) -> dict:
+    """Win rate by shot type (drive/dink/drop/...), for rallies the subject
+    personally ended.
+
+    shots.json classifies every subject hit's type; points.json knows every
+    rally's winner and (now) last_hitter -- joined here via each rally's end
+    time, which is independently the same underlying hit_times value both
+    shots.json's per-shot `t` and rallies[i]['end'] were rounded from, so the
+    match is exact, not fuzzy. Only subject-ended rallies are scored: the app
+    doesn't classify opponent/partner shot types, so extending this to "any
+    rally" isn't supported by data that actually exists.
+    """
+    by_t = {s["t"]: s["type"] for s in shots}
+    rows = []
+    for r, o in zip(rallies, outcomes):
+        if o.get("last_hitter") != "subject":
+            continue
+        shot_type = by_t.get(round(float(r["end"]), 2))
+        if shot_type is not None:
+            rows.append((shot_type, o["winner"]))
+    return _win_rate_by_key(rows)

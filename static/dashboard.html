@@ -618,6 +618,7 @@
       <h2>Partner synergy</h2>
       <div class="grid" id="synergyStats"></div>
       <div id="synergyNote" class="heatnote" style="margin-top:8px">lower overlap = more court spread between you and your partner</div>
+      <div id="synergyTip" class="coach" style="display:none;margin-top:12px"></div>
     </div>
     <div class="card">
       <h2>Shots</h2>
@@ -1394,7 +1395,27 @@ function renderPoints(pt, ev) {
         Math.round(100 * hbp[k] / Math.max(1, ...Object.values(hbp))) + '%"></div></div>' +
       '<span class="val">' + hbp[k] + '</span></div>').join('') + '</div>';
   }
+  const serveRates = pt.serve_side_win_rates || {};
+  if (Object.keys(serveRates).length) {
+    note += '<div class="bars" style="margin-top:14px"><div class="heatnote" style="margin-bottom:6px">win rate by serve placement</div>' +
+      rateBars(serveRates, ['left', 'middle', 'right']) + '</div>';
+  }
+  const shotTypeRates = pt.shot_type_outcomes || {};
+  if (Object.keys(shotTypeRates).length) {
+    note += '<div class="bars" style="margin-top:14px"><div class="heatnote" style="margin-bottom:6px">win rate by shot type (rallies you ended)</div>' +
+      rateBars(shotTypeRates, ['drive', 'dink', 'drop', 'medium', 'unknown'], k => SHOT_TYPE_LABELS[k] || k) + '</div>';
+  }
   $('pointNote').innerHTML = note;
+}
+function rateBars(rates, order, labelFn) {
+  const keys = (order || Object.keys(rates)).filter(k => rates[k]);
+  return keys.map(k => {
+    const r = rates[k];
+    const lbl = labelFn ? labelFn(k) : k;
+    return '<div class="bar"><span class="lb">' + esc(lbl) + '</span>' +
+      '<div class="track"><div class="fill" data-w="' + r.win_pct + '%" style="background:var(--accent)"></div></div>' +
+      '<span class="val">' + r.win_pct + '%<small> (' + r.attempts + ')</small></span></div>';
+  }).join('');
 }
 function renderShots(sh) {
   $('shotStats').innerHTML = ''; $('shotMix').innerHTML = ''; $('shotNote').innerHTML = '';
@@ -1418,6 +1439,9 @@ function renderShots(sh) {
   if (sh.avg_shot_mph != null) {
     cards += statCard(sh.avg_shot_mph + '<small> mph</small>', 'avg shot speed') +
              statCard(sh.top_shot_mph + '<small> mph</small>', 'top shot speed');
+  }
+  if (sh.avg_swing_mph != null) {
+    cards += statCard(sh.avg_swing_mph + '<small> mph</small>', 'avg swing speed');
   }
   cards += statCard(Math.round((sh.ball && sh.ball.coverage || 0) * 100) + '<small>%</small>', 'ball track coverage');
   $('shotStats').innerHTML = cards;
@@ -1546,6 +1570,8 @@ async function loadSynergy() {
     statCard(syn.min_separation_ft + '<small> ft</small>', 'closest moment') +
     statCard(syn.coverage_overlap_pct + '<small>%</small>', 'coverage overlap');
   animateStats($('synergyStats'));
+  $('synergyTip').innerHTML = syn.tip ? tipSVG + '<span>' + esc(syn.tip) + '</span>' : '';
+  $('synergyTip').style.display = syn.tip ? 'flex' : 'none';
 }
 async function loadBallTrajectory(sh) {
   const card = $('ballTrajCard');

@@ -79,12 +79,28 @@ def test_swing_detection_and_attribution():
         "frame": frames, "lwx": lw[:, 0], "lwy": lw[:, 1],
         "rwx": np.zeros(n), "rwy": np.zeros(n),  # right wrist undetected
     })
-    swings = detect_swings(wrist_speed(sub, fps))
+    swings = detect_swings(wrist_speed(sub, fps, court_width_px=900.0))
     assert len(swings) >= 1 and abs(swings[0] - 2.0) < 0.3, swings
 
     hits = np.array([2.05, 8.0])
     mine = attribute_hits(hits, swings)
     assert mine[0] and not mine[1], mine
+
+
+def test_wrist_speed_normalizes_by_court_width():
+    """Same raw wrist motion, different court_width_px, must produce
+    inversely-scaled normalized speed -- this is the whole fix: a raw px/s
+    threshold silently under/over-detects swings depending on how tightly
+    the camera frames the court, same generalization risk shots.py's
+    ball-speed handling already avoids via the same normalization."""
+    fps = 30.0
+    lw = np.array([[100.0, 100.0], [140.0, 100.0], [180.0, 100.0],
+                   [220.0, 100.0], [260.0, 100.0]])  # 40 px/frame = 1200 px/s
+    sub = pd.DataFrame({"frame": np.arange(5), "lwx": lw[:, 0], "lwy": lw[:, 1],
+                        "rwx": np.zeros(5), "rwy": np.zeros(5)})
+    narrow_peak = wrist_speed(sub, fps, court_width_px=600.0)["speed"].max()
+    wide_peak = wrist_speed(sub, fps, court_width_px=1200.0)["speed"].max()
+    assert abs(narrow_peak - 2 * wide_peak) < 1e-6, (narrow_peak, wide_peak)
 
 
 def test_rally_metrics_empty():
@@ -118,7 +134,8 @@ def test_corroborate_hits_doubles_any_of_four_players_corroborates():
 
 if __name__ == "__main__":
     for fn in [test_hits_survive_noise_speech_music, test_detect_hits_and_rallies,
-               test_swing_detection_and_attribution, test_rally_metrics_empty,
+               test_swing_detection_and_attribution, test_wrist_speed_normalizes_by_court_width,
+               test_rally_metrics_empty,
                test_corroborate_hits_drops_unswung_audio,
                test_corroborate_hits_skips_filter_when_no_swings_tracked,
                test_corroborate_hits_doubles_any_of_four_players_corroborates]:

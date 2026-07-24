@@ -330,7 +330,7 @@ def correct_point(sid: str, idx: int, patch: PointCorrection):
     hit counts are independent of who won each rally, so they're carried
     over unchanged rather than recomputed (the hitter attribution used to
     build them isn't persisted anywhere)."""
-    from points import point_summary
+    from points import point_summary, serve_side_win_rates, shot_type_outcomes
 
     sdir = _sdir(sid)
     pf = sdir / "points.json"
@@ -345,6 +345,15 @@ def correct_point(sid: str, idx: int, patch: PointCorrection):
     ball_available = "caveat" not in data
     summary = point_summary(outcomes, ball_available)
     summary["hits_by_player"] = data.get("hits_by_player", {})
+    # a corrected winner changes who "gets credit" for a rally, so the
+    # serve-placement/shot-type breakdowns (both derived from outcomes)
+    # must be recomputed too, not just carried over stale
+    shots_report = _load_json(sdir, "shots.json")
+    rallies = _load_json(sdir, "events.json").get("rallies", [])
+    summary["serve_side_win_rates"] = serve_side_win_rates(
+        shots_report.get("serves") or [], outcomes)
+    summary["shot_type_outcomes"] = shot_type_outcomes(
+        shots_report.get("shots") or [], rallies, outcomes)
     new_data = {"outcomes": outcomes, **summary}
     pf.write_text(json.dumps(new_data))
     return new_data
@@ -701,6 +710,7 @@ def synergy(sid: str):
     import pandas as pd
 
     from court import CourtCalibration
+    from feedback import synergy_tip
     from metrics import synergy_report
     from tracking import subject_court_positions
 
@@ -710,7 +720,9 @@ def synergy(sid: str):
     partner_pos = subject_court_positions(tracks, m["partner_track_id"], calib, pipeline.FPS)
     pos_f = sdir / "positions.parquet"
     subject_pos = pd.read_parquet(pos_f) if pos_f.exists() else pd.DataFrame(columns=["t", "x", "y"])
-    return synergy_report(subject_pos, partner_pos)
+    report = synergy_report(subject_pos, partner_pos)
+    report["tip"] = synergy_tip(report)
+    return report
 
 
 @app.get("/api/session/{sid}")

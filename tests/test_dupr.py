@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from dupr import RUBRIC, estimate, interp_band, next_anchor_target
-from feedback import coach_tips, drills_for_weak, fatigue_note
+from feedback import coach_tips, drills_for_weak, fatigue_note, synergy_tip
 
 GOOD_METRICS = {"zone_pct": {"kitchen": 55.0, "transition": 12.0, "baseline": 33.0},
                 "active_seconds": 900.0, "warnings": []}
@@ -149,6 +149,30 @@ def test_fatigue_note_none_when_too_short():
     assert fatigue_note([{"avg_speed_ft_s": 5.0}, {"avg_speed_ft_s": 1.0}]) is None
 
 
+def test_synergy_tip_none_when_unavailable():
+    assert synergy_tip({"available": False}) is None
+
+
+def test_synergy_tip_flags_high_overlap():
+    tip = synergy_tip({"available": True, "coverage_overlap_pct": 50.0, "avg_separation_ft": 10.0})
+    assert tip is not None and "bunching up" in tip
+
+
+def test_synergy_tip_flags_low_separation():
+    tip = synergy_tip({"available": True, "coverage_overlap_pct": 5.0, "avg_separation_ft": 5.0})
+    assert tip is not None and "tight" in tip
+
+
+def test_synergy_tip_flags_high_separation():
+    tip = synergy_tip({"available": True, "coverage_overlap_pct": 5.0, "avg_separation_ft": 18.0})
+    assert tip is not None and "middle open" in tip
+
+
+def test_synergy_tip_none_when_balanced():
+    tip = synergy_tip({"available": True, "coverage_overlap_pct": 10.0, "avg_separation_ft": 12.0})
+    assert tip is None
+
+
 if __name__ == "__main__":
     for fn in [test_interp_band_monotone_and_clamped, test_next_anchor_target_increasing_dimension,
                test_next_anchor_target_decreasing_dimension, test_strong_player_beats_weak_player,
@@ -156,6 +180,9 @@ if __name__ == "__main__":
                test_unmeasurable_dims_omitted, test_tips_target_weakest,
                test_drills_rank_all_weak_dimensions, test_drills_empty_when_nothing_weak,
                test_drills_empty_when_unavailable, test_fatigue_note_flags_meaningful_drop,
-               test_fatigue_note_none_when_steady, test_fatigue_note_none_when_too_short]:
+               test_fatigue_note_none_when_steady, test_fatigue_note_none_when_too_short,
+               test_synergy_tip_none_when_unavailable, test_synergy_tip_flags_high_overlap,
+               test_synergy_tip_flags_low_separation, test_synergy_tip_flags_high_separation,
+               test_synergy_tip_none_when_balanced]:
         fn()
         print(f"ok {fn.__name__}")

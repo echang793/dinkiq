@@ -25,7 +25,8 @@ def test_events_uses_real_video_duration_not_tracked_frames(tmp_path, monkeypatc
     monkeypatch.setattr(pipeline, "_run", lambda cmd: None)  # skip real ffmpeg clip cuts
     tracks = pd.DataFrame(columns=TRACK_COLUMNS)  # empty -> old tracked-frame duration was 0.0
     hit_times = np.array([1.0, 1.3, 1.6])  # one rally of 3 hits, 0.6s long
-    pipeline.events(tmp_path, tracks, subject=1, partner=None, opponents=[],
+    corners_px = [[300.0, 150.0], [1000.0, 150.0], [1250.0, 700.0], [50.0, 700.0]]
+    pipeline.events(tmp_path, tracks, subject=1, partner=None, opponents=[], corners_px=corners_px,
                     hit_times=hit_times, video_duration=100.0)
     ev = json.loads((tmp_path / "events.json").read_text())
     assert ev["rally_count"] == 1

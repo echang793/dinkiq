@@ -8,7 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from points import attribute_hitters, point_summary, rally_outcomes
+from points import (attribute_hitters, point_summary, rally_outcomes,
+                    serve_side_win_rates, shot_type_outcomes)
 
 
 def test_attribute_hitters_nearest_swing():
@@ -37,7 +38,8 @@ def test_rally_outcomes_without_ball_assumes_last_hitter_wins():
     hits = np.array([1.0, 2.0, 3.0])
     hitters = ["subject", "opponent1", "subject"]  # subject served, subject hit last
     out = rally_outcomes(rallies, hits, hitters, bounces_court=None)
-    assert out == [{"server": "subject", "winner": "subject", "unforced_error": False}]
+    assert out == [{"server": "subject", "last_hitter": "subject",
+                   "winner": "subject", "unforced_error": False}]
 
 
 def test_rally_outcomes_ball_out_flips_winner_to_unforced_error():
@@ -57,7 +59,8 @@ def test_rally_outcomes_ball_in_keeps_hitter_as_winner():
     hitters = ["subject", "opponent1", "subject"]
     bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [3.3]})  # well inbounds
     out = rally_outcomes(rallies, hits, hitters, bounces_court=bounces)
-    assert out[0] == {"server": "subject", "winner": "subject", "unforced_error": False}
+    assert out[0] == {"server": "subject", "last_hitter": "subject",
+                      "winner": "subject", "unforced_error": False}
 
 
 def test_rally_outcomes_doubles_partner_hit_counts_as_my_team():
@@ -66,7 +69,8 @@ def test_rally_outcomes_doubles_partner_hit_counts_as_my_team():
     hitters = ["subject", "opponent1", "partner"]  # partner hit last, on my team
     bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [3.3]})  # well inbounds
     out = rally_outcomes(rallies, hits, hitters, bounces_court=bounces)
-    assert out[0] == {"server": "subject", "winner": "partner", "unforced_error": False}
+    assert out[0] == {"server": "subject", "last_hitter": "partner",
+                      "winner": "partner", "unforced_error": False}
 
 
 def test_rally_outcomes_unknown_last_hitter():
@@ -74,7 +78,8 @@ def test_rally_outcomes_unknown_last_hitter():
     hits = np.array([1.0, 3.0])
     hitters = ["subject", "unknown"]
     out = rally_outcomes(rallies, hits, hitters)
-    assert out == [{"server": "subject", "winner": "unknown", "unforced_error": None}]
+    assert out == [{"server": "subject", "last_hitter": "unknown",
+                   "winner": "unknown", "unforced_error": None}]
 
 
 def test_point_summary_counts_and_rates():
@@ -114,6 +119,43 @@ def test_point_summary_empty():
     assert s["serve_win_pct"] is None
 
 
+def test_serve_side_win_rates_joins_by_rally_index():
+    serves = [{"side": "middle", "rally_index": 0}, {"side": "left", "rally_index": 1},
+             {"side": "middle", "rally_index": 2}]
+    outcomes = [{"winner": "subject"}, {"winner": "opponent1"}, {"winner": "my_team"}]
+    rates = serve_side_win_rates(serves, outcomes)
+    assert rates == {"middle": {"attempts": 2, "win_pct": 100.0},
+                     "left": {"attempts": 1, "win_pct": 0.0}}
+
+
+def test_serve_side_win_rates_skips_unknown_and_out_of_range():
+    serves = [{"side": "middle", "rally_index": 0}, {"side": "left", "rally_index": 5}]
+    outcomes = [{"winner": "unknown"}]
+    assert serve_side_win_rates(serves, outcomes) == {}
+
+
+def test_shot_type_outcomes_joins_by_rally_end_time():
+    # rally 0: subject's drive ended it, won. rally 1: subject's dink ended
+    # it, lost. rally 2: opponent hit last, not subject -- excluded, since
+    # the app doesn't classify opponent shot types.
+    shots = [{"t": 3.0, "type": "drive"}, {"t": 21.0, "type": "dink"}]
+    rallies = [{"start": 1.0, "end": 3.0}, {"start": 10.0, "end": 21.0},
+              {"start": 30.0, "end": 33.0}]
+    outcomes = [{"last_hitter": "subject", "winner": "subject"},
+               {"last_hitter": "subject", "winner": "opponent1"},
+               {"last_hitter": "opponent1", "winner": "opponent1"}]
+    rates = shot_type_outcomes(shots, rallies, outcomes)
+    assert rates == {"drive": {"attempts": 1, "win_pct": 100.0},
+                     "dink": {"attempts": 1, "win_pct": 0.0}}
+
+
+def test_shot_type_outcomes_empty_when_no_subject_ended_rallies():
+    shots = [{"t": 3.0, "type": "drive"}]
+    rallies = [{"start": 1.0, "end": 3.0}]
+    outcomes = [{"last_hitter": "opponent1", "winner": "opponent1"}]
+    assert shot_type_outcomes(shots, rallies, outcomes) == {}
+
+
 if __name__ == "__main__":
     for fn in [test_attribute_hitters_nearest_swing, test_attribute_hitters_unknown_when_no_swing_matches,
                test_attribute_hitters_doubles_four_way,
@@ -124,6 +166,10 @@ if __name__ == "__main__":
                test_rally_outcomes_unknown_last_hitter,
                test_point_summary_counts_and_rates, test_point_summary_doubles_hits_by_player,
                test_point_summary_no_ball_adds_caveat,
-               test_point_summary_empty]:
+               test_point_summary_empty,
+               test_serve_side_win_rates_joins_by_rally_index,
+               test_serve_side_win_rates_skips_unknown_and_out_of_range,
+               test_shot_type_outcomes_joins_by_rally_end_time,
+               test_shot_type_outcomes_empty_when_no_subject_ended_rallies]:
         fn()
         print(f"ok {fn.__name__}")

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from shots import (ball_speed_at, classify_shot, mph_from_norm,
                    opponent_shot_landings, opponent_shot_report, serve_metrics,
-                   serve_side, shot_report, subject_pos_at)
+                   serve_side, shot_report, subject_pos_at, swing_speed_at)
 
 FPS = 30.0
 CORNERS = [[300.0, 150.0], [1000.0, 150.0], [1250.0, 700.0], [50.0, 700.0]]
@@ -57,8 +57,23 @@ def test_serve_placement_recorded():
     mine = np.array([True, False, True])
     bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [1.4]})  # court width 20 -> middle third
     m = serve_metrics(rallies, mine, hits, bounces)
-    assert m["serves"] == [{"t": 1.0, "depth_ft": 4.0, "x": 10.0, "y": 40.0, "side": "middle"}]
+    assert m["serves"] == [{"t": 1.0, "depth_ft": 4.0, "x": 10.0, "y": 40.0,
+                           "side": "middle", "rally_index": 0}]
     assert m["serve_side_counts"] == {"middle": 1}
+
+
+def test_serve_rally_index_skips_non_subject_serves():
+    # 3 rallies: subject serves rally 0, opponent serves rally 1 (no serve
+    # recorded), subject serves rally 2 -- rally_index must track the real
+    # position in `rallies`, not the position in the (shorter) serves list
+    rallies = [{"start": 1.0, "end": 2.0, "hits": 2, "duration": 1.0},
+              {"start": 10.0, "end": 11.0, "hits": 2, "duration": 1.0},
+              {"start": 20.0, "end": 21.0, "hits": 2, "duration": 1.0}]
+    hits = np.array([1.0, 2.0, 10.0, 11.0, 20.0, 21.0])
+    mine = np.array([True, False, False, True, True, False])
+    bounces = pd.DataFrame({"x": [10.0, 10.0], "y": [40.0, 40.0], "t": [1.4, 20.4]})
+    m = serve_metrics(rallies, mine, hits, bounces)
+    assert [s["rally_index"] for s in m["serves"]] == [0, 2]
 
 
 def test_serve_side_thirds():
@@ -109,6 +124,40 @@ def test_shot_report_includes_mph():
     assert rep["shots"][0]["mph"] == expected
     assert rep["avg_shot_mph"] == expected
     assert rep["top_shot_mph"] == expected
+
+
+def test_swing_speed_at_windowed_median():
+    ws = pd.DataFrame({"t": [0.9, 1.0, 1.1], "speed": [1.0, 1.0, 1.0]})
+    assert swing_speed_at(ws, 1.0) == mph_from_norm(1.0)
+    assert swing_speed_at(ws, 100.0) is None  # nothing within the window
+
+
+def test_shot_report_includes_swing_mph_when_ws_provided():
+    rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
+    hits = np.array([1.0])
+    mine = np.array([True])
+    frames = np.arange(60)
+    ball = pd.DataFrame({"frame": frames, "x": frames * 10.0, "y": 300.0, "seg": 0})
+    pos = pd.DataFrame({"t": [0.9, 1.0, 1.1], "x": [8.0, 9.0, 10.0], "y": [15.0, 16.0, 17.0]})
+    ws = pd.DataFrame({"t": [0.9, 1.0, 1.1], "speed": [1.0, 1.0, 1.0]})
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS, ws=ws)
+    expected = mph_from_norm(1.0)
+    assert rep["shots"][0]["swing_mph"] == expected
+    assert rep["avg_swing_mph"] == expected
+
+
+def test_shot_report_swing_mph_absent_without_ws():
+    rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
+    hits = np.array([1.0])
+    mine = np.array([True])
+    frames = np.arange(60)
+    ball = pd.DataFrame({"frame": frames, "x": frames * 10.0, "y": 300.0, "seg": 0})
+    pos = pd.DataFrame({"t": [0.9, 1.0, 1.1], "x": [8.0, 9.0, 10.0], "y": [15.0, 16.0, 17.0]})
+    rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
+                      pd.DataFrame(columns=["x", "y", "t"]), FPS)
+    assert "swing_mph" not in rep["shots"][0]
+    assert rep["avg_swing_mph"] is None
 
 
 def test_shot_report_top_shot_t_points_at_the_fastest_shot():
@@ -205,9 +254,13 @@ def test_opponent_shot_report_combines_opponent1_and_opponent2():
 
 if __name__ == "__main__":
     for fn in [test_classify_rules, test_ball_speed_at, test_low_coverage_degrades,
-               test_serve_depth, test_serve_placement_recorded, test_serve_side_thirds,
+               test_serve_depth, test_serve_placement_recorded,
+               test_serve_rally_index_skips_non_subject_serves, test_serve_side_thirds,
                test_subject_pos_at, test_shot_report_includes_position_when_available,
                test_mph_from_norm, test_shot_report_includes_mph,
+               test_swing_speed_at_windowed_median,
+               test_shot_report_includes_swing_mph_when_ws_provided,
+               test_shot_report_swing_mph_absent_without_ws,
                test_opponent_shot_landings_and_report, test_opponent_shot_report_empty_when_no_hits,
                test_shot_report_with_hitters_adds_opponent_shots,
                test_serve_depth_rejects_implausible_bounce,

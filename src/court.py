@@ -84,6 +84,16 @@ class CourtCalibration:
         return cls(data["corners_px"], data.get("kitchen_px"))
 
 
+def court_px_width(corners_px: list[list[float]]) -> float:
+    """Average of the two baseline pixel lengths -- the pixel-to-feet scale
+    for the session's actual camera framing. Screen-space speeds (ball mph,
+    wrist-swing speed) are meaningless as raw px/s across sessions shot at
+    different distances/zooms; dividing by this first makes them comparable
+    (see shots.mph_from_norm)."""
+    (flx, fly), (frx, fry), (nrx, nry), (nlx, nly) = corners_px
+    return (np.hypot(frx - flx, fry - fly) + np.hypot(nrx - nlx, nry - nly)) / 2.0
+
+
 def dist_from_net(y: float) -> float:
     return abs(y - NET_Y)
 

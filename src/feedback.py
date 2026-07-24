@@ -122,6 +122,35 @@ def fatigue_note(movement_curve: list[dict]) -> str | None:
            "technique, may be the limiter late in matches.")
 
 
+SYNERGY_HIGH_OVERLAP_PCT = 35.0   # heuristic doubles-positioning thresholds --
+SYNERGY_LOW_SEPARATION_FT = 8.0   # not calibrated against real match data (same
+SYNERGY_HIGH_SEPARATION_FT = 16.0 # caveat dupr.py already carries for doubles positioning)
+
+
+def synergy_tip(synergy: dict) -> str | None:
+    """One coaching sentence from a doubles synergy report (metrics.synergy_
+    report's separation/overlap numbers), or None if nothing stands out.
+    Those numbers currently only ever reach the UI as raw stats with no
+    prescription, unlike the singles rubric's coach_tips/drills_for_weak."""
+    if not synergy.get("available"):
+        return None
+    overlap = synergy.get("coverage_overlap_pct")
+    sep = synergy.get("avg_separation_ft")
+    if overlap is not None and overlap >= SYNERGY_HIGH_OVERLAP_PCT:
+        return (f"You and your partner covered the same court area {overlap:.0f}% of the "
+               "time — you're bunching up. Spread out so one of you isn't defending "
+               "ground the other already has.")
+    if sep is not None and sep <= SYNERGY_LOW_SEPARATION_FT:
+        return (f"You averaged only {sep:.1f} ft apart — that's tight for a 20 ft-wide "
+               "court. Widen your spacing so a ball down the line doesn't split the gap "
+               "between you.")
+    if sep is not None and sep >= SYNERGY_HIGH_SEPARATION_FT:
+        return (f"You averaged {sep:.1f} ft apart — that's wide enough to leave the "
+               "middle open. Tighten up so neither of you is chasing a ball that lands "
+               "between you.")
+    return None
+
+
 def coach_tips(dupr: dict, max_tips: int = 3) -> list[str]:
     """Improvement tips for the weakest dimensions + one strength callout."""
     if not dupr.get("available"):
