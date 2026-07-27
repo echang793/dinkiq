@@ -21,13 +21,32 @@ ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
 ALLOWED_EXT = {".mp4", ".mov", ".m4v"}
 
+
+def _load_dotenv(path: Path) -> None:
+    """Minimal .env loader (KEY=VALUE per line, '#' comments) so secrets like
+    DINKIQ_PASSWORD survive a server restart without depending on whatever
+    shell/launcher started the process. Doesn't override an already-set
+    real env var. No new dependency -- this is the only var that needs it."""
+    if not path.exists():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip())
+
+
+_load_dotenv(ROOT / ".env")
+
 app = FastAPI(title="DinkIQ")
 
 # ── Optional HTTP Basic Auth for remote access (e.g. via Tailscale Funnel) ──
-# Set DINKIQ_PASSWORD=somepassword. Localhost bypasses auth regardless — this
-# mirrors vantage_ufc/src/pwa_server.py's pattern. Checked via the Host header
-# (not client IP), since a Funnel-proxied request still arrives locally but
-# carries the public hostname in Host.
+# Set DINKIQ_PASSWORD=somepassword (in .env, or the environment directly).
+# Localhost bypasses auth regardless — this mirrors vantage_ufc/src/
+# pwa_server.py's pattern. Checked via the Host header (not client IP), since
+# a Funnel-proxied request still arrives locally but carries the public
+# hostname in Host.
 _DINKIQ_PASSWORD = os.environ.get("DINKIQ_PASSWORD", "").strip() or None
 _DINKIQ_PASSWORD_BYTES = _DINKIQ_PASSWORD.encode() if _DINKIQ_PASSWORD else None
 
@@ -86,6 +105,11 @@ class MetaPatch(BaseModel):
 @app.get("/")
 def index():
     return FileResponse(STATIC / "dashboard.html")
+
+
+@app.get("/backyard")
+def backyard():
+    return FileResponse(STATIC / "backyard.html")
 
 
 MAX_UPLOAD_BYTES = 2 << 30  # 2 GB
@@ -922,4 +946,4 @@ def reprocess(sid: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8100)
+    uvicorn.run(app, host="0.0.0.0", port=8100)
