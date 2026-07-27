@@ -308,7 +308,24 @@ document.addEventListener('DOMContentLoaded', async function() {
     const headOpen = template.match(/<head[^>]*>/i);
     if (headOpen) {
       const i = headOpen.index + headOpen[0].length;
-      template = template.slice(0, i) + resourceScript + template.slice(i);
+      // Mobile fix: this app's own layout is a fixed 300px/1fr/330px CSS
+      // grid, and html/body/the app root are all clamped to a fixed 100vh
+      // with overflow:hidden (a single-viewport desktop design, relying on
+      // per-panel internal scrolling) -- neither reflows or scrolls on a
+      // phone width. Injected here (not as a top-level <style>/<script> in
+      // this wrapper file) because documentElement.replaceWith() below
+      // discards everything outside `template` -- this has to become part
+      // of the parsed doc.
+      const mobileFix = '<style>@media (max-width: 820px) {' +
+        'html,body{overflow-y:auto !important;height:auto !important;}' +
+        '[data-sc-name="backyard"]{overflow-y:auto !important;height:auto !important;min-height:100vh !important;}' +
+        '[data-screen-label="Tracking Station"]{overflow-y:auto !important;height:auto !important;min-height:100vh !important;}' +
+        '[data-screen-label="Tracking Station"] > div:nth-child(2){' +
+        'display:flex !important;flex-direction:column !important;overflow:visible !important;height:auto !important;}' +
+        '[data-screen-label="Tracking Station"] > div:nth-child(2) > div{' +
+        'width:100% !important;min-width:0 !important;max-height:none !important;overflow:visible !important;}' +
+        '}</style>';
+      template = template.slice(0, i) + resourceScript + mobileFix + template.slice(i);
     }
 
     // Parse the template and swap the root element. Scripts inserted via
