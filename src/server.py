@@ -3,6 +3,7 @@
 import base64
 import json
 import os
+import re
 import secrets
 import shutil
 import threading
@@ -165,6 +166,132 @@ async def _save_upload(sdir: Path, file: UploadFile) -> Path:
 
 MATCH_TYPES = {"singles", "doubles"}
 
+# ── Resumable upload ──────────────────────────────────────────────────────
+# A phone on cellular pushing a multi-GB clip through a single POST loses
+# the entire transfer on one dropped connection. These three endpoints let
+# the client append in chunks and, after a drop, ask where to pick up.
+UPLOADS = SESSIONS.parent / "uploads"
+UPLOAD_TTL_S = 24 * 3600
+
+
+def _upload_part(upload_id: str) -> Path:
+    """Partial-upload path for an id, rejecting anything not our own uuid
+    hex (this lands in a filesystem path, so never trust the client's)."""
+    if not re.fullmatch(r"[0-9a-f]{32}", upload_id or ""):
+        raise HTTPException(400, "bad upload id")
+    return UPLOADS / f"{upload_id}.part"
+
+
+def _sweep_uploads() -> None:
+    """Drop abandoned partials so a failed 2 GB upload can't sit forever."""
+    import time
+    if not UPLOADS.exists():
+        return
+    now = time.time()
+    for f in UPLOADS.iterdir():
+        if f.is_file() and now - f.stat().st_mtime > UPLOAD_TTL_S:
+            f.unlink(missing_ok=True)
+
+
+class UploadInit(BaseModel):
+    filename: str = Field(max_length=260)
+    match_type: str = "singles"
+
+    @field_validator("match_type")
+    @classmethod
+    def _valid_match_type(cls, v):
+        if v not in MATCH_TYPES:
+            raise ValueError(f"match_type must be one of {sorted(MATCH_TYPES)}")
+        return v
+
+
+@app.post("/api/upload/init")
+def upload_init(req: UploadInit):
+    ext = Path(req.filename).suffix.lower()
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(400, f"unsupported file type {ext}")
+    _sweep_uploads()
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    upload_id = uuid.uuid4().hex
+    _upload_part(upload_id).touch()
+    return {"upload_id": upload_id, "offset": 0}
+
+
+@app.get("/api/upload/{upload_id}")
+def upload_status(upload_id: str):
+    """Bytes already stored — the client resumes from here after a drop."""
+    part = _upload_part(upload_id)
+    if not part.exists():
+        raise HTTPException(404, "unknown upload")
+    return {"upload_id": upload_id, "offset": part.stat().st_size}
+
+
+@app.put("/api/upload/{upload_id}")
+async def upload_chunk(upload_id: str, request: Request, offset: int = 0):
+    """Append one chunk. `offset` must equal what we already hold, so a
+    retried or out-of-order chunk can never silently corrupt the file."""
+    part = _upload_part(upload_id)
+    if not part.exists():
+        raise HTTPException(404, "unknown upload")
+    have = part.stat().st_size
+    if offset != have:
+        # not an error the client can't recover from — tell it where we are
+        raise HTTPException(409, f"offset mismatch: server has {have}")
+    with part.open("ab") as f:
+        async for chunk in request.stream():
+            have += len(chunk)
+            if have > MAX_UPLOAD_BYTES:
+                f.close()
+                part.unlink(missing_ok=True)
+                raise HTTPException(413, "upload exceeds 2 GB limit")
+            f.write(chunk)
+    return {"upload_id": upload_id, "offset": have}
+
+
+class UploadFinish(BaseModel):
+    filename: str = Field(max_length=260)
+    match_type: str = "singles"
+
+    @field_validator("match_type")
+    @classmethod
+    def _valid_match_type(cls, v):
+        if v not in MATCH_TYPES:
+            raise ValueError(f"match_type must be one of {sorted(MATCH_TYPES)}")
+        return v
+
+
+@app.post("/api/upload/{upload_id}/finish")
+def upload_finish(upload_id: str, req: UploadFinish):
+    """Promote a completed partial into a real session and start ingest."""
+    part = _upload_part(upload_id)
+    if not part.exists():
+        raise HTTPException(404, "unknown upload")
+    ext = Path(req.filename).suffix.lower()
+    if ext not in ALLOWED_EXT:
+        raise HTTPException(400, f"unsupported file type {ext}")
+    if part.stat().st_size == 0:
+        part.unlink(missing_ok=True)
+        raise HTTPException(400, "no data uploaded")
+
+    sid = uuid.uuid4().hex[:12]
+    sdir = SESSIONS / sid
+    sdir.mkdir(parents=True)
+    raw = sdir / f"raw{ext}"
+    shutil.move(str(part), str(raw))
+    return _start_session(sdir, raw, req.filename, req.match_type)
+
+
+def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dict:
+    """Write meta, kick off ingest — shared by both upload paths."""
+    meta = {"filename": filename, "match_type": match_type}
+    dur = pipeline.probe_video(raw).get("duration", 0.0)
+    if dur > WARN_DURATION_S:
+        meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
+                           "while; consider splitting into games")
+    (sdir / "meta.json").write_text(json.dumps(meta))
+    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
+    return {"session_id": sdir.name, "duration_s": dur, "warning": meta.get("warning")}
+
 
 @app.post("/api/upload")
 async def upload(file: UploadFile, match_type: str = Form("singles")):
@@ -178,14 +305,7 @@ async def upload(file: UploadFile, match_type: str = Form("singles")):
     except HTTPException:
         shutil.rmtree(sdir)
         raise
-    meta = {"filename": file.filename, "match_type": match_type}
-    dur = pipeline.probe_video(raw).get("duration", 0.0)
-    if dur > WARN_DURATION_S:
-        meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
-                           "while; consider splitting into games")
-    (sdir / "meta.json").write_text(json.dumps(meta))
-    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
-    return {"session_id": sid, "duration_s": dur, "warning": meta.get("warning")}
+    return _start_session(sdir, raw, file.filename, match_type)
 
 
 @app.post("/api/session/{sid}/reupload")
