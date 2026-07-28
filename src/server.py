@@ -10,8 +10,9 @@ import uuid
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi.responses import (FileResponse, HTMLResponse, PlainTextResponse,
+                               Response)
 from pydantic import BaseModel, Field, field_validator
 
 import pipeline
@@ -102,13 +103,39 @@ class MetaPatch(BaseModel):
         return v
 
 
+def _mount_prefix(request: Request) -> str:
+    """Path prefix this app is mounted under, from the reverse proxy.
+
+    Served directly (localhost, LAN) this is "" and every URL stays
+    root-absolute as before. Behind the vantage Caddy hub the app lives at
+    /app/dinkiq/ with the prefix stripped before it reaches us, so the
+    server never sees it in request.url — without echoing the proxy's
+    X-Forwarded-Prefix back to the page, the frontend's root-absolute
+    fetch('/api/...') calls resolve against the hub origin instead of this
+    app and every one of them 404s.
+    """
+    return (request.headers.get("x-forwarded-prefix") or "").rstrip("/")
+
+
+def _spa(path: Path, request: Request) -> HTMLResponse:
+    """Serve an SPA page with window.__BASE__ set to the mount prefix."""
+    html = path.read_text()
+    prefix = _mount_prefix(request)
+    if prefix:
+        tag = f"<script>window.__BASE__={json.dumps(prefix)};</script>"
+        html = html.replace("<head>", "<head>" + tag, 1)
+    return HTMLResponse(html)
+
+
 @app.get("/")
-def index():
-    return FileResponse(STATIC / "dashboard.html")
+def index(request: Request):
+    return _spa(STATIC / "dashboard.html", request)
 
 
 @app.get("/backyard")
-def backyard():
+def backyard(request: Request):
+    # self-contained page, no API calls of its own — no prefix needed, and it
+    # rebuilds <head> at runtime anyway (see its own mobile-fix comment)
     return FileResponse(STATIC / "backyard.html")
 
 

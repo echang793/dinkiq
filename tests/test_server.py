@@ -304,6 +304,35 @@ def test_last_calibration_unavailable_when_never_set():
     assert r.json() == {"available": False}
 
 
+def test_index_has_no_base_when_served_directly():
+    """Served straight off localhost/LAN there is no proxy prefix, so the
+    page must stay exactly as-is and all URLs stay root-absolute."""
+    r = client.get("/")
+    assert r.status_code == 200
+    # the page's own `const BASE = window.__BASE__ || ''` always mentions the
+    # global -- what must be absent is the server-injected assignment
+    assert "<script>window.__BASE__=" not in r.text
+
+
+def test_index_injects_base_from_forwarded_prefix():
+    """Behind the vantage Caddy hub the app is mounted at /app/dinkiq/ with
+    the prefix stripped before it reaches us -- without echoing it back to
+    the page, the frontend's root-absolute fetch('/api/...') resolves
+    against the hub origin and 404s."""
+    r = client.get("/", headers={"X-Forwarded-Prefix": "/app/dinkiq"})
+    assert r.status_code == 200
+    assert '<script>window.__BASE__="/app/dinkiq";</script>' in r.text
+    # injected inside <head>, before the app's own script runs
+    assert r.text.index("window.__BASE__") < r.text.index("const BASE")
+
+
+def test_index_strips_trailing_slash_from_prefix():
+    # BASE is concatenated as BASE + '/api/...', so a trailing slash would
+    # produce a double slash in every request path
+    r = client.get("/", headers={"X-Forwarded-Prefix": "/app/dinkiq/"})
+    assert '<script>window.__BASE__="/app/dinkiq";</script>' in r.text
+
+
 if __name__ == "__main__":
     for fn in [test_bulk_delete, test_delete_rejects_traversal_and_missing,
                test_delete_empty_ids_rejected, test_soft_delete_then_restore,
@@ -317,6 +346,9 @@ if __name__ == "__main__":
                test_meta_patch_context_accepts_valid_and_rejects_invalid,
                test_sessions_filter_by_context,
                test_calibrate_writes_last_calibration_corners_only,
-               test_last_calibration_unavailable_when_never_set]:
+               test_last_calibration_unavailable_when_never_set,
+               test_index_has_no_base_when_served_directly,
+               test_index_injects_base_from_forwarded_prefix,
+               test_index_strips_trailing_slash_from_prefix]:
         fn()
         print(f"ok {fn.__name__}")

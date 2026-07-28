@@ -453,7 +453,9 @@
     <div class="navdrop" id="navMore">
       <span onclick="toggleNavMore(event)" tabindex="0" role="button" aria-haspopup="true">More ▾</span>
       <div class="navdrop-panel" id="navMorePanel">
-        <a href="/backyard">Backyard Tracking Station</a>
+        <!-- Relative, not "/backyard": the Vantage hub serves this app under
+             /app/dinkiq/, and a root-absolute link would escape that prefix. -->
+        <a href="backyard">Backyard Tracking Station</a>
       </div>
     </div>
   </div>
@@ -775,6 +777,12 @@
 <script>
 'use strict';
 const $ = id => document.getElementById(id);
+// Path prefix this app is mounted under, injected by server._spa() from the
+// reverse proxy's X-Forwarded-Prefix. Empty when served directly (localhost,
+// LAN), so URLs stay root-absolute exactly as before. Behind the vantage
+// Caddy hub the app lives at /app/dinkiq/, and every root-absolute URL here
+// would otherwise resolve against the hub origin instead of this app.
+const BASE = window.__BASE__ || '';
 let sid = null, pollTimer = null, DEMO = false;
 // must match dupr.py's BAND_MIN/BAND_MAX — every band the backend can ever
 // output is clamped to this range, so the gauge/bars/radar all scale to it
@@ -830,7 +838,7 @@ const DEMO_PROBE_PATHS = ['/sessions', '/progress'];
 async function api(p, opt) {
   if (DEMO) return mockApi(p, opt);
   try {
-    const r = await fetch('/api' + p, opt);
+    const r = await fetch(BASE + '/api' + p, opt);
     const isProbe = DEMO_PROBE_PATHS.some(probe => p === probe || p.startsWith(probe + '?'));
     if (r.status === 404 && !DEMO && isProbe) { enableDemo(); return mockApi(p, opt); }
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw (e.detail || ('HTTP ' + r.status)); }
@@ -840,7 +848,7 @@ async function api(p, opt) {
     throw e;
   }
 }
-function frameURL() { return DEMO ? demoFrameURL() : '/api/session/' + sid + '/frame?ts=' + Date.now(); }
+function frameURL() { return DEMO ? demoFrameURL() : BASE + '/api/session/' + sid + '/frame?ts=' + Date.now(); }
 let demoRetryTimer = null;
 function enableDemo(){
   if (DEMO) return;
@@ -850,11 +858,11 @@ function enableDemo(){
   // a single dropped request shouldn't trap the tab in fake data forever —
   // keep checking, and reload (a clean DEMO=false) the moment the server answers
   if (!demoRetryTimer) demoRetryTimer = setInterval(() => {
-    fetch('/api/sessions').then(r => { if (r.ok) location.reload(); }).catch(() => {});
+    fetch(BASE + '/api/sessions').then(r => { if (r.ok) location.reload(); }).catch(() => {});
   }, 5000);
 }
 function retryBackend() {
-  fetch('/api/sessions').then(r => {
+  fetch(BASE + '/api/sessions').then(r => {
     if (r.ok) location.reload();
     else toast("Still can't reach the server — will keep retrying");
   }).catch(() => toast("Still can't reach the server — will keep retrying"));
@@ -954,7 +962,7 @@ function doUpload(f) {
   const fail = msg => { uploading = false; resetDrop(); toast('Upload failed: ' + msg, true); };
   if (DEMO) { demoUpload(f, done); return; }
   const xhr = new XMLHttpRequest();
-  xhr.open('POST', '/api/upload');
+  xhr.open('POST', BASE + '/api/upload');
   xhr.upload.onprogress = e => { if (e.lengthComputable) setUpProgress(e.loaded / e.total, e.loaded, e.total); };
   xhr.onload = () => {
     let j = {}; try { j = JSON.parse(xhr.responseText); } catch(e){}
@@ -1338,16 +1346,16 @@ function celebrate() {
 }
 function downloadReport() {
   if (DEMO) { toast('PDF report needs the live backend'); return; }
-  window.open('/api/session/' + sid + '/report.pdf', '_blank');
+  window.open(BASE + '/api/session/' + sid + '/report.pdf', '_blank');
 }
 function downloadHighlights() {
   if (DEMO) { toast('Highlight reel needs the live backend'); return; }
   toast('Building highlight reel…');
-  window.open('/api/session/' + sid + '/highlights.mp4', '_blank');
+  window.open(BASE + '/api/session/' + sid + '/highlights.mp4', '_blank');
 }
 function downloadStatCard() {
   if (DEMO) { toast('Stat card needs the live backend'); return; }
-  window.open('/api/session/' + sid + '/card.png', '_blank');
+  window.open(BASE + '/api/session/' + sid + '/card.png', '_blank');
 }
 const PLAYER_LABELS = { subject: 'you', partner: 'partner', opponent1: 'opp1', opponent2: 'opp2' };
 function isMyTeam(label) { return label === 'my_team' || label === 'subject' || label === 'partner'; }
@@ -1669,7 +1677,7 @@ function playClip(i) {
   document.querySelectorAll('.rally').forEach(el => el.classList.remove('playing'));
   const row = $('rallyRow' + i); if (row) { row.classList.add('playing'); row.after(v); }
   v.style.display = 'block';
-  v.src = '/api/session/' + sid + '/clip/' + i;
+  v.src = BASE + '/api/session/' + sid + '/clip/' + i;
   v.play().catch(() => {});
 }
 
@@ -1975,15 +1983,15 @@ async function loadClipCompare(idA, idB) {
   const opt = r => '<option value="' + r.i + '">Rally ' + (r.i + 1) + ' — ' + r.hits + ' hits · ' + r.duration + 's</option>';
   $('clipCmpRallyA').innerHTML = ralliesA.map((r, i) => opt({ ...r, i })).join('');
   $('clipCmpRallyB').innerHTML = ralliesB.map((r, i) => opt({ ...r, i })).join('');
-  $('clipCmpVideoA').src = '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
-  $('clipCmpVideoB').src = '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
+  $('clipCmpVideoA').src = BASE + '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
+  $('clipCmpVideoB').src = BASE + '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
 }
 function playBothClips() {
   const [idA, idB] = clipCmpIds;
   if (!idA || !idB) return;
   const va = $('clipCmpVideoA'), vb = $('clipCmpVideoB');
-  va.src = '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
-  vb.src = '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
+  va.src = BASE + '/api/session/' + idA + '/clip/' + $('clipCmpRallyA').value;
+  vb.src = BASE + '/api/session/' + idB + '/clip/' + $('clipCmpRallyB').value;
   Promise.all([va.play().catch(() => {}), vb.play().catch(() => {})]);
 }
 function renderCompareMulti(sessions) {
@@ -2100,7 +2108,7 @@ async function loadSessionsPage() {
 /* ---------------- Trash ---------------- */
 function exportSessionsCsv() {
   if (DEMO) { toast('CSV export needs the live backend'); return; }
-  window.open('/api/sessions/export.csv', '_blank');
+  window.open(BASE + '/api/sessions/export.csv', '_blank');
 }
 async function openTrash() {
   const card = $('trashCard');
