@@ -125,6 +125,58 @@ def test_notify_webhook_error_message_included(monkeypatch, tmp_path):
     assert "ball coverage too low" in calls[0]["content"]
 
 
+def test_notify_message_includes_result_and_deep_link(monkeypatch, tmp_path):
+    """Analysis takes many minutes, so the notification is only useful if it
+    carries the result and a link -- otherwise it just says 'go look'."""
+    monkeypatch.setenv("DINKIQ_PUBLIC_URL", "https://host/app/dinkiq/")
+    (tmp_path / "meta.json").write_text(json.dumps({"label": "Tuesday league"}))
+    (tmp_path / "dupr.json").write_text(json.dumps({"band": 3.75, "confidence": 0.42}))
+    msg = pipeline.notify_message(tmp_path, ok=True)
+    assert "Tuesday league" in msg
+    assert "~3.75 DUPR" in msg
+    assert "42% confidence" in msg
+    assert "https://host/app/dinkiq" in msg  # trailing slash normalized off
+
+
+def test_notify_message_degrades_without_rating_or_url(monkeypatch, tmp_path):
+    monkeypatch.delenv("DINKIQ_PUBLIC_URL", raising=False)
+    (tmp_path / "meta.json").write_text(json.dumps({"label": "No rating"}))
+    msg = pipeline.notify_message(tmp_path, ok=True)
+    assert "No rating" in msg
+    assert "DUPR" not in msg and "http" not in msg
+
+
+def test_notify_message_failure_carries_error(tmp_path):
+    msg = pipeline.notify_message(tmp_path, ok=False, error="ball coverage too low")
+    assert "failed" in msg and "ball coverage too low" in msg
+
+
+def test_notify_webhook_ntfy_posts_plain_text(monkeypatch, tmp_path):
+    """ntfy takes a plain-text body, not Discord's {"content": ...} JSON --
+    posting the wrong shape silently delivers an empty notification."""
+    monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://ntfy.sh/my-topic")
+    (tmp_path / "meta.json").write_text(json.dumps({"label": "Match"}))
+    calls = []
+    monkeypatch.setattr("requests.post",
+                        lambda url, **kw: calls.append((url, kw)))
+    pipeline.notify_webhook(tmp_path, ok=True)
+    url, kw = calls[0]
+    assert url == "https://ntfy.sh/my-topic"
+    assert kw.get("json") is None
+    assert b"Match" in kw["data"]
+    assert kw["headers"]["Title"] == "DinkIQ"
+
+
+def test_notify_webhook_defaults_to_discord_json(monkeypatch, tmp_path):
+    monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://discord.com/api/webhooks/x")
+    (tmp_path / "meta.json").write_text(json.dumps({"label": "Match"}))
+    calls = []
+    monkeypatch.setattr("requests.post", lambda url, **kw: calls.append((url, kw)))
+    pipeline.notify_webhook(tmp_path, ok=True)
+    _, kw = calls[0]
+    assert "Match" in kw["json"]["content"]
+
+
 def test_notify_webhook_never_raises_on_post_failure(monkeypatch, tmp_path):
     monkeypatch.setenv("DINKIQ_WEBHOOK_URL", "https://example.invalid/hook")
     def boom(*a, **kw): raise ConnectionError("no network")

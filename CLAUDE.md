@@ -30,6 +30,17 @@ app falls silently into sample-data demo mode. Keep new frontend URLs
 
 Logs: `~/.vantage/logs/dinkiq.log`.
 
+**launchd gives a minimal PATH without Homebrew.** The wrapper re-exports
+`/opt/homebrew/bin` because the pipeline shells out to ffmpeg/ffprobe —
+without it the server serves fine but every analysis dies with
+`[Errno 2] ... 'ffprobe'`, i.e. silently broken.
+
+Config lives in the repo's gitignored `.env`, loaded process-wide by
+`server._load_dotenv()` (so `pipeline` sees it too):
+`DINKIQ_PASSWORD`, `DINKIQ_PUBLIC_URL` (deep link in notifications),
+`DINKIQ_WEBHOOK_URL` (analysis-finished push; URLs containing `ntfy`
+get a plain-text body, anything else Discord/Slack JSON).
+
 ## Entry points
 
 - `src/server.py` — FastAPI server at http://127.0.0.1:8100

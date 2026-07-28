@@ -216,23 +216,61 @@ def _friendly_error(raw_error: str) -> str:
     return raw_error
 
 
+def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
+    """Human-readable analysis-finished message.
+
+    Analysis runs for many minutes, so the useful notification is one you
+    can act on without opening the app first: the result itself, plus a
+    deep link. Separate from notify_webhook so it's testable without a
+    network call.
+    """
+    meta = _load_json_quiet(sdir / "meta.json")
+    label = meta.get("label") or meta.get("filename") or sdir.name
+    if not ok:
+        return f"⚠️ DinkIQ: {label} failed to analyze — {error or 'unknown error'}"
+
+    parts = [f"✅ DinkIQ: {label} finished analyzing."]
+    dupr = _load_json_quiet(sdir / "dupr.json")
+    if dupr.get("band") is not None:
+        line = f"Plays like ~{dupr['band']} DUPR"
+        if dupr.get("confidence") is not None:
+            line += f" ({dupr['confidence']:.0%} confidence)"
+        parts.append(line)
+    public = os.environ.get("DINKIQ_PUBLIC_URL", "").strip().rstrip("/")
+    if public:
+        parts.append(public)
+    return "\n".join(parts)
+
+
+def _load_json_quiet(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text())
+    except Exception:
+        return {}
+
+
 def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
-    """Post to DINKIQ_WEBHOOK_URL (Discord-compatible) when analysis finishes.
+    """Push an analysis-finished notification to DINKIQ_WEBHOOK_URL.
+
     No-op if unset. Never raises — a notification failure must never break
-    the analysis pipeline."""
+    the analysis pipeline.
+
+    Supports the two shapes worth caring about, picked by URL so there's
+    nothing extra to configure: ntfy (plain-text body — real phone push,
+    no account needed) and Discord/Slack-compatible JSON, which stays the
+    default so an already-configured Discord webhook keeps working.
+    """
     url = os.environ.get("DINKIQ_WEBHOOK_URL", "").strip()
     if not url:
         return
-    meta_f = sdir / "meta.json"
-    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
-    label = meta.get("label") or meta.get("filename") or sdir.name
-    if ok:
-        content = f"✅ DinkIQ: **{label}** finished analyzing."
-    else:
-        content = f"⚠️ DinkIQ: **{label}** failed to analyze — {error or 'unknown error'}"
+    msg = notify_message(sdir, ok, error)[:2000]
     try:
         import requests
-        requests.post(url, json={"content": content[:2000]}, timeout=10)
+        if "ntfy" in url:
+            requests.post(url, data=msg.encode(), timeout=10,
+                          headers={"Title": "DinkIQ", "Tags": "ping" if ok else "warning"})
+        else:
+            requests.post(url, json={"content": msg}, timeout=10)
     except Exception as e:
         print(f"  [webhook] notify failed (non-fatal): {e}")
 
