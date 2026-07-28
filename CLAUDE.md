@@ -8,6 +8,28 @@ DUPR skill estimation and analysis system: video analysis pipeline, rubric calib
 
 Python 3.13, FastAPI, Pydantic v2, PyTorch, ffmpeg, SQLite, Parquet.
 
+## Deployment (remote / phone access)
+
+Runs under launchd and is reached through the shared "vantage hub", not
+directly. Config lives outside this repo (same convention as the sibling
+vantage projects — nothing here is checked in), so it is listed here
+because its absence once made a total remote-access outage invisible:
+
+- `~/Library/LaunchAgents/com.vantage.dinkiq.plist` — RunAtLoad + KeepAlive
+- `~/.vantage/scripts/dinkiq-start.sh` — launcher (uses this repo's `.venv`)
+- `~/.vantage/Caddyfile` — reverse-proxies :8100 at **`/app/dinkiq/`**
+  (generated from `~/.vantage/projects.json`; do not hand-edit)
+- Public URL: `https://<tailnet-host>/app/dinkiq/`, gated by Caddy basic_auth
+
+Caddy **strips** the `/app/dinkiq` prefix and sends `X-Forwarded-Prefix`.
+`server._spa()` echoes it back as `window.__BASE__` and the frontend
+prefixes every root-absolute URL with it — without that, the page loads
+but every `/api/...` call resolves against the hub origin, 404s, and the
+app falls silently into sample-data demo mode. Keep new frontend URLs
+`BASE`-prefixed. Served directly (localhost/LAN) `BASE` is `""`.
+
+Logs: `~/.vantage/logs/dinkiq.log`.
+
 ## Entry points
 
 - `src/server.py` — FastAPI server at http://127.0.0.1:8100
