@@ -954,7 +954,12 @@ function doUpload(f) {
   const done = r => {
     uploading = false;
     sid = r.session_id;
-    if (r.warning) $('upWarn').innerHTML = '<div class="warnbox">⚠ ' + esc(r.warning) + '</div>';
+    let notes = '';
+    if (r.warning) notes += '<div class="warnbox">⚠ ' + esc(r.warning) + '</div>';
+    // shown only when the source was bigger than the 720p30 pipeline can use
+    if (r.capture_hint) notes += '<div class="coach" style="margin-top:8px">' + tipSVG +
+      '<span>' + esc(r.capture_hint) + '</span></div>';
+    $('upWarn').innerHTML = notes;
     $('dropTitle').textContent = 'Preparing video';
     $('dropSub').textContent = 'extracting frames…';
     waitFor(s => s.stage === 'ingest' && s.state === 'done', () => { resetDrop(); startCalib(); }, 'Preparing video', true);

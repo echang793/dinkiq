@@ -138,5 +138,40 @@ def test_finish_rejects_empty_upload():
         _cleanup(upload_id=uid)
 
 
+def test_capture_hint_flags_oversized_capture():
+    """Analysis runs at 720p30 regardless, so anything larger costs upload
+    time and transcode for identical results."""
+    assert server.capture_hint({"height": 2160, "fps": 60.0}) is not None
+    assert "720p30" in server.capture_hint({"height": 2160, "fps": 60.0})
+    assert server.capture_hint({"height": 1080, "fps": 60.0}) is not None   # fps alone
+    assert server.capture_hint({"height": 2160, "fps": 30.0}) is not None   # height alone
+
+
+def test_capture_hint_quiet_for_reasonable_footage():
+    assert server.capture_hint({"height": 1080, "fps": 30.0}) is None
+    assert server.capture_hint({"height": 720, "fps": 30.0}) is None
+    assert server.capture_hint({}) is None
+
+
+def test_finish_surfaces_capture_hint(monkeypatch):
+    monkeypatch.setattr(server.threading, "Thread",
+                        lambda target, args, daemon: type(
+                            "T", (), {"start": lambda self: None})())
+    monkeypatch.setattr(server.pipeline, "probe_video",
+                        lambda p: {"duration": 10.0, "height": 2160, "fps": 60.0})
+    uid = _init()
+    sid = None
+    try:
+        client.put(f"/api/upload/{uid}?offset=0", content=b"x")
+        r = client.post(f"/api/upload/{uid}/finish", json={"filename": "clip.mp4"})
+        sid = r.json()["session_id"]
+        assert "720p30" in r.json()["capture_hint"]
+        import json as _json
+        assert "capture_hint" in _json.loads(
+            (server.SESSIONS / sid / "meta.json").read_text())
+    finally:
+        _cleanup(sid=sid, upload_id=uid)
+
+
 if __name__ == "__main__":
     print("run via pytest")

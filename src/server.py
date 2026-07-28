@@ -281,16 +281,44 @@ def upload_finish(upload_id: str, req: UploadFinish):
     return _start_session(sdir, raw, req.filename, req.match_type)
 
 
+# Analysis runs at 720p30 no matter what comes in, so anything larger is
+# paid for twice (upload bytes, then transcode) and thrown away. Measured on
+# a 20s clip: 4K60 took 4.0s to ingest and 5.2 MB, vs 1.7s and 1.5 MB for
+# 1080p30 — ~2.4x the ingest and ~3.5x the upload for identical results.
+CAPTURE_HINT_HEIGHT = 1080
+CAPTURE_HINT_FPS = 31.0
+
+
+def capture_hint(info: dict) -> str | None:
+    """Suggest a leaner capture setting when the source is bigger than the
+    pipeline can use. None when the footage is already reasonable."""
+    too_tall = info.get("height", 0) > CAPTURE_HINT_HEIGHT
+    too_fast = info.get("fps", 0) > CAPTURE_HINT_FPS
+    if not (too_tall or too_fast):
+        return None
+    was = f"{info.get('height', 0)}p"
+    if info.get("fps"):
+        was += f"{info['fps']:.0f}"
+    return (f"Recorded at {was}. DinkIQ analyzes at 720p30, so a smaller "
+            "capture uploads faster and starts sooner with identical results — "
+            "1080p30 is the sweet spot.")
+
+
 def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dict:
     """Write meta, kick off ingest — shared by both upload paths."""
     meta = {"filename": filename, "match_type": match_type}
-    dur = pipeline.probe_video(raw).get("duration", 0.0)
+    info = pipeline.probe_video(raw)
+    dur = info.get("duration", 0.0)
     if dur > WARN_DURATION_S:
         meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
                            "while; consider splitting into games")
+    hint = capture_hint(info)
+    if hint:
+        meta["capture_hint"] = hint
     (sdir / "meta.json").write_text(json.dumps(meta))
     threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
-    return {"session_id": sdir.name, "duration_s": dur, "warning": meta.get("warning")}
+    return {"session_id": sdir.name, "duration_s": dur,
+            "warning": meta.get("warning"), "capture_hint": hint}
 
 
 @app.post("/api/upload")
