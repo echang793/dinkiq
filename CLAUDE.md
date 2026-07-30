@@ -17,16 +17,26 @@ because its absence once made a total remote-access outage invisible:
 
 - `~/Library/LaunchAgents/com.vantage.dinkiq.plist` — RunAtLoad + KeepAlive
 - `~/.vantage/scripts/dinkiq-start.sh` — launcher (uses this repo's `.venv`)
-- `~/.vantage/Caddyfile` — reverse-proxies :8100 at **`/app/dinkiq/`**
+- `~/.vantage/Caddyfile` — reverse-proxies :8100 at the funnel **root**
   (generated from `~/.vantage/projects.json`; do not hand-edit)
-- Public URL: `https://<tailnet-host>/app/dinkiq/`, gated by Caddy basic_auth
+- Public URL: `https://<tailnet-host>/`, gated by Caddy basic_auth (user
+  `eric`, same password as `DINKIQ_PASSWORD`)
 
-Caddy **strips** the `/app/dinkiq` prefix and sends `X-Forwarded-Prefix`.
-`server._spa()` echoes it back as `window.__BASE__` and the frontend
-prefixes every root-absolute URL with it — without that, the page loads
-but every `/api/...` call resolves against the hub origin, 404s, and the
-app falls silently into sample-data demo mode. Keep new frontend URLs
-`BASE`-prefixed. Served directly (localhost/LAN) `BASE` is `""`.
+The funnel is dedicated to this project: `projects.json` sets
+`"root_project": "dinkiq"`, which makes the `:8081` catch-all proxy here
+instead of the hub, and every sibling project is `enabled=false`. To
+un-dedicate it, drop `root_project`, re-enable the others, regenerate,
+`launchctl kickstart -k gui/501/com.vantage.caddy`, and re-add the funnel
+ports the root-mounted projects need (`tailscale funnel --https=<p> <p>`).
+
+At the root there is no prefix to strip, so Caddy sends no
+`X-Forwarded-Prefix` and `window.__BASE__` is unset — the frontend's
+`BASE` falls back to `""`, same as localhost. **The prefix machinery is
+still live and still required**: `server._spa()` injects `__BASE__` from
+the header whenever one arrives, so if this app is ever moved back under
+`/app/dinkiq/` it keeps working. Keep new frontend URLs `BASE`-prefixed;
+without that a subpath mount loads the page but every `/api/...` call
+404s against the hub origin and the app falls silently into demo mode.
 
 Logs: `~/.vantage/logs/dinkiq.log`.
 
