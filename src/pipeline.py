@@ -124,7 +124,11 @@ def build_highlights(sdir: Path) -> Path | None:
         return None
     out = sdir / "highlights.mp4"
     listfile = sdir / "highlights_list.txt"
-    listfile.write_text("\n".join(f"file '{c.resolve()}'" for c in clips))
+    # concat-demuxer quoting: a literal ' inside '...' is written as '\''.
+    # Without this any path containing an apostrophe (e.g. "Eric's MacBook")
+    # truncates the filename and ffmpeg fails with "Impossible to open".
+    listfile.write_text("\n".join(
+        "file '" + str(c.resolve()).replace("'", "'\\''") + "'" for c in clips))
     try:
         _run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(listfile),
               "-c", "copy", str(out)])
