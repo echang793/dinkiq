@@ -39,14 +39,19 @@ analysis worker (200 only when everything is fine).
 
 No real cloud "free tier" can run the torch + YOLO + ffmpeg pipeline (too little
 RAM, or GPU cost per hour). Free option: expose your own Mac via
-[Tailscale Funnel](https://tailscale.com/kb/1223/funnel) — same pattern as the
-sibling `vantage_ufc/src/pwa_server.py`.
+[Tailscale Funnel](https://tailscale.com/kb/1223/funnel). The Funnel fronts a Caddy
+reverse proxy (HTTP Basic auth), which proxies to this server on 127.0.0.1:8100 — see
+**Deployment** in `CLAUDE.md` for the launchd services, watchdog and backups. Quick local
+version:
 
 ```bash
 export DINKIQ_PASSWORD="something-only-you-and-friends-know"
 .venv/bin/python src/server.py     # keep running in one terminal
 tailscale funnel 8100              # in another terminal — prints the public https:// URL
 ```
+
+(Pointing the Funnel straight at :8100 also works — requests then use the app's own
+password prompt. The production setup goes through Caddy.)
 
 - Your Mac has to stay awake and the server running for friends to reach it.
 - `DINKIQ_PASSWORD` gates everyone except genuinely-local requests (loopback peer,
@@ -56,21 +61,27 @@ tailscale funnel 8100              # in another terminal — prints the public h
   proves itself with `DINKIQ_PROXY_SECRET` via the `X-Dinkiq-Proxy` header.
   The Host header is never trusted on its own.
 - `tailscale funnel status` shows the current public URL; `tailscale funnel off`
-  stops sharing.
-- `DINKIQ_WEBHOOK_URL` (optional): a Discord webhook URL. Set it to get pinged
-  when a session finishes analyzing (or fails) instead of watching the
-  progress bar — analysis can take minutes.
+  stops sharing. **If the machine is renamed the Funnel hostname changes** and the
+  old config silently serves nothing — re-run `tailscale funnel --bg <caddy-port>`.
+- `DINKIQ_WEBHOOK_URL` (optional): an [ntfy](https://ntfy.sh) topic URL (real phone push,
+  no account — pick a long random topic name, it is the only secret) or a Discord/Slack
+  webhook. Pings when a session finishes analyzing or fails, and when the watchdog sees
+  DinkIQ go down or recover.
 
 ## Pipeline (per session, artifacts under `data/sessions/<id>/`)
 
 | Stage | Module | Artifact | Notes |
 |---|---|---|---|
-| ingest | `pipeline.py` | `video.mp4`, `audio.wav`, `frame0.jpg`, `ingest.json` | remux fast-path when input is already ≤720p H.264 ~30fps |
-| tracking | `tracking.py` | `tracks.parquet` | YOLOv8n-pose + ByteTrack, `vid_stride=2`; ball candidates (`ball.py::BallDetector`) and camera cuts (`CutDetector`) ride the same decode |
-| metrics | `metrics.py` | `positions.parquet`, `metrics.json` | subject stitched across track-id breaks; homography anchored by kitchen corners |
-| events | `events.py` | `events.json`, `clips/` | audio hits (band-passed 1–6 kHz + transient gate) → rallies; wrist-speed swings attribute shots |
+| ingest | `media.py` | `video.mp4`, `audio.wav`, `frame0.jpg`, `ingest.json` | remux fast-path when input is already ≤720p H.264 ~30fps; original `raw.*` kept `DINKIQ_KEEP_RAW_DAYS` (14) |
+| tracking | `tracking.py` | `tracks.parquet`, `cuts.json` | YOLOv8s-pose + ByteTrack, `vid_stride=2`; ball candidates (`ball.py::BallDetector`) and camera cuts (`CutDetector`) ride the same decode |
+| metrics | `metrics.py` | `positions.parquet`, `metrics.json` | subject stitched across track-id breaks; homography fit from the clicked corners |
+| events | `events.py`, `stages.py` | `events.json`, `clips/` | audio hits (band-passed 1–6 kHz + transient gate) → rallies; wrist-speed swings attribute shots |
 | shots | `ball.py`, `shots.py` | `ball.parquet`, `shots.json` | bounce-projected serve depth; degrades below 15% ball coverage |
-| rating | `dupr.py`, `feedback.py` | `dupr.json` | weighted rubric → band + confidence + tips |
+| points | `points.py` | `points.json` | rally winners + serve/return/shot-type win rates (correctable per rally) |
+| rating | `dupr.py`, `feedback.py` | `dupr.json` | weighted rubric → band + confidence + tips + drills |
+
+`stages.py` orchestrates events → rating (`analyze()`), `jobs.py` runs it on the single
+analysis worker, `notify.py` pushes the result. Highlights/report/card are built on demand.
 
 Every stage is resumable; `tracks.parquet`/`ball.parquet` survive recalibration so
 it takes seconds.
@@ -79,7 +90,7 @@ it takes seconds.
 
 1. Upload + calibrate clips of players with known DUPR ratings.
 2. Set "Known DUPR" in Session info for each.
-3. `python3 src/calibrate_rubric.py` (needs ≥4 tagged sessions) — fits per-dimension
+3. `.venv/bin/python src/calibrate_rubric.py` (needs ≥4 tagged sessions) — fits per-dimension
    anchor shifts, writes `models/rubric_calibrated.json`, reports before/after MAE.
    Re-analyze old sessions to apply.
 

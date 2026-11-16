@@ -6,7 +6,8 @@ DUPR skill estimation and analysis system: video analysis pipeline, rubric calib
 
 ## Stack
 
-Python 3.13, FastAPI, Pydantic v2, PyTorch, ffmpeg, SQLite, Parquet.
+Python 3.13, FastAPI, Pydantic v2, PyTorch (ultralytics YOLOv8-pose), ffmpeg, Parquet. State is plain files
+under `data/` (JSON + parquet) — there is no database.
 
 ## Deployment (remote / phone access)
 
@@ -47,7 +48,22 @@ the header whenever one arrives, so if this app is ever moved back under
 without that a subpath mount loads the page but every `/api/...` call
 404s against the hub origin and the app falls silently into demo mode.
 
-Logs: `~/.vantage/logs/dinkiq.log`.
+Logs: the app writes `~/.vantage/logs/dinkiq-app.log` (rotating, 5 MB × 5, timestamped; uvicorn
+access + errors too). `dinkiq.log` is launchd's stdout/stderr — startup and crash output only,
+capped by the launcher.
+
+**Ops (all outside the repo, in `~/.vantage/scripts/` + `~/Library/LaunchAgents/`):**
+- `GET /api/health` — 200 only if ffmpeg/ffprobe are on PATH, disk > 2 GB, data dir writable,
+  pose weights present, analysis worker alive. Else 503 with per-check detail.
+- `com.vantage.dinkiq.watchdog` (every 5 min) checks app health, the Caddy gate **and the public
+  URL**, and pushes to `DINKIQ_WEBHOOK_URL` (ntfy) after 2 failing runs, then again on recovery.
+  The public-URL check is what catches a Funnel/hostname problem (the machine was renamed once
+  and the Funnel silently kept the old name).
+- `com.vantage.dinkiq.backup` (03:15 daily) hard-linked snapshots of `data/` + `.env` into
+  `~/Backups/dinkiq/`, 14 days. Same disk — also use Time Machine or an offsite copy.
+- The launcher backs off 300 s (instead of spinning) if the repo/venv is missing.
+- On startup `jobs.recover_interrupted()` re-queues analyses a restart interrupted and restarts
+  interrupted ingests (the queue is in memory only).
 
 **launchd gives a minimal PATH without Homebrew.** The wrapper re-exports
 `/opt/homebrew/bin` because the pipeline shells out to ffmpeg/ffprobe —
@@ -57,21 +73,31 @@ without it the server serves fine but every analysis dies with
 Config lives in the repo's gitignored `.env`, loaded process-wide by
 `server._load_dotenv()` (so `pipeline` sees it too):
 `DINKIQ_PASSWORD`, `DINKIQ_PROXY_SECRET`, `DINKIQ_PUBLIC_URL` (deep link in notifications),
-`DINKIQ_WEBHOOK_URL` (analysis-finished push; URLs containing `ntfy`
+`DINKIQ_WEBHOOK_URL` (analysis finished/failed + ingest failed push; URLs containing `ntfy`
 get a plain-text body, anything else Discord/Slack JSON).
+Optional: `DINKIQ_KEEP_RAW_DAYS` (original uploads are swept N days after ingest; default 14,
+`0` = right away, negative = keep), `DINKIQ_DATA_DIR` (relocate all mutable state; tests set
+it to a temp dir), `DINKIQ_HOST` (bind address, default `127.0.0.1`), `DINKIQ_LOG_DIR`.
 
-## Entry points
+## Layout
 
-- `src/server.py` — FastAPI server at http://127.0.0.1:8100
-- `src/calibrate_rubric.py` — Fit rubric vs known DUPR sessions
-- `src/analyze` — Analysis pipeline (video → tracks → shots → skill)
+- `src/server.py` — app wiring: auth middleware, startup recovery, SPA pages, `/api/health`
+- `src/api/` — routes by area: `uploads`, `sessions`, `trash`, `insights`, `exports`; `maintenance`
+  (hourly sweeps); `common` (paths, `iter_sessions`, shared helpers)
+- `src/pipeline.py` — storage layout only (paths, session ids, derived artifacts)
+- `src/session_status.py` · `src/media.py` (ffmpeg, ingest, highlights) · `src/jobs.py` (worker,
+  queue, recovery) · `src/stages.py` (events → shots → points → rating, `analyze()`) · `src/notify.py`
+- CV/analysis: `tracking`, `ball`, `events`, `shots`, `points`, `court`, `metrics`, `dupr`, `feedback`
+- `src/jsonio.py` — **all** JSON persistence goes through this (atomic writes, tolerant reads, NaN→null)
+- `src/calibrate_rubric.py` — fit rubric vs known-DUPR sessions
+- `docs/API.md` — the API contract; `tests/test_api_docs.py` fails if it drifts from the app
 
 ## Commands
 
 ```bash
 .venv/bin/python src/server.py          # Serve at http://127.0.0.1:8100
 .venv/bin/python -m pytest tests/       # Run all test suites
-python3 src/calibrate_rubric.py         # Fit rubric vs known DUPR sessions
+.venv/bin/python src/calibrate_rubric.py # Fit rubric vs known DUPR sessions
 ```
 
 Venv is Python 3.13 (torch incompatible with system 3.14); ffmpeg via brew.
@@ -89,6 +115,15 @@ Venv is Python 3.13 (torch incompatible with system 3.14); ffmpeg via brew.
 ## Gotchas
 
 - PostToolUse hook runs `ruff check --fix` and DELETES unused imports — add imports in same edit as code
+- **Repo lives at `~/dev/dinkiq`, deliberately outside iCloud Desktop.** iCloud once evicted ~25k files (mostly
+  `.venv`) and the launchd service crash-looped on `Resource deadlock avoided`. Also: ultralytics silently strips
+  `'` from weight paths, so never put the repo under a path containing one.
+- **Tests never touch real data**: `tests/conftest.py` points `DINKIQ_DATA_DIR` at a temp dir and wipes it around
+  every test. When monkeypatching, patch the name **on the module whose code looks it up** (`media.probe_video`,
+  `notify.notify_webhook`, `jobs.enqueue_analyze`, `uploads.MAX_PARTIAL_UPLOADS`...); cross-module calls use the
+  module attribute for exactly this reason. A patch on the wrong module is a silent no-op.
+- Write JSON with `jsonio.atomic_write_json` and read with `jsonio.load_json`, never `write_text`/`json.loads` —
+  one truncated file used to 500 every list endpoint, and a NaN used to 500 or crash iOS Safari.
 - `py_compile` passes with missing imports — verify by importing the module
 - Court lines are any color (not necessarily white)
 - UI copy: DUPR estimates are "resembles ~X.X", never certified ratings
