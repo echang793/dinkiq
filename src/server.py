@@ -45,20 +45,57 @@ app = FastAPI(title="DinkIQ")
 
 # ── Optional HTTP Basic Auth for remote access (e.g. via Tailscale Funnel) ──
 # Set DINKIQ_PASSWORD=somepassword (in .env, or the environment directly).
-# Localhost bypasses auth regardless — this mirrors vantage_ufc/src/
-# pwa_server.py's pattern. Checked via the Host header (not client IP), since
-# a Funnel-proxied request still arrives locally but carries the public
-# hostname in Host.
+#
+# A request skips the password only if it is
+#   (a) from the reverse proxy -- carries DINKIQ_PROXY_SECRET in X-Dinkiq-Proxy
+#       (Caddy overwrites that header on every proxied request, after its own
+#       basic_auth has passed), or
+#   (b) genuinely local -- loopback peer, no forwarding headers, loopback Host.
+# The Host header alone is NOT trusted: any client picks its own, and the
+# server used to listen on every interface, so `Host: 127.0.0.1` from anywhere
+# on the LAN/tailnet got full access. (b) still checks Host, but only to keep
+# DNS-rebinding pages (their own name resolving to 127.0.0.1) out.
+DEFAULT_HOST = "127.0.0.1"  # Caddy proxies to 127.0.0.1:8100; nothing else needs the port
+HOST = os.environ.get("DINKIQ_HOST", "").strip() or DEFAULT_HOST
 _DINKIQ_PASSWORD = os.environ.get("DINKIQ_PASSWORD", "").strip() or None
 _DINKIQ_PASSWORD_BYTES = _DINKIQ_PASSWORD.encode() if _DINKIQ_PASSWORD else None
+_PROXY_SECRET = os.environ.get("DINKIQ_PROXY_SECRET", "").strip() or None
+_PROXY_SECRET_BYTES = _PROXY_SECRET.encode() if _PROXY_SECRET else None
+
+_LOCAL_PEERS = ("127.0.0.1", "::1")
+_LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+_FORWARDING_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-proto",
+                       "x-real-ip", "forwarded")
+
+
+def _host_without_port(host: str) -> str:
+    host = host.strip().lower()
+    if host.startswith("["):  # [::1]:8100
+        return host[:host.find("]") + 1] if "]" in host else host
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def _from_trusted_proxy(request: Request) -> bool:
+    if _PROXY_SECRET_BYTES is None:
+        return False
+    provided = request.headers.get("x-dinkiq-proxy", "").encode()
+    return secrets.compare_digest(provided, _PROXY_SECRET_BYTES)
+
+
+def _is_local_request(request: Request) -> bool:
+    peer = request.client.host if request.client else ""
+    if peer not in _LOCAL_PEERS:
+        return False
+    if any(h in request.headers for h in _FORWARDING_HEADERS):
+        return False
+    return _host_without_port(request.headers.get("host", "")) in _LOCAL_HOSTS
 
 
 @app.middleware("http")
 async def _basic_auth(request, call_next):
     if _DINKIQ_PASSWORD_BYTES is None:
         return await call_next(request)
-    host = (request.headers.get("host") or "").split(":")[0].lower()
-    if host in ("127.0.0.1", "localhost", ""):
+    if _from_trusted_proxy(request) or _is_local_request(request):
         return await call_next(request)
     auth_header = request.headers.get("authorization", "")
     if auth_header.startswith("Basic "):
@@ -1121,4 +1158,7 @@ def reprocess(sid: str):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8100)
+    if _DINKIQ_PASSWORD_BYTES and not _PROXY_SECRET_BYTES:
+        print("warning: DINKIQ_PASSWORD is set but DINKIQ_PROXY_SECRET is not -- "
+              "requests through the reverse proxy will be asked for the password again")
+    uvicorn.run(app, host=HOST, port=8100)

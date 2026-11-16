@@ -22,6 +22,15 @@ because its absence once made a total remote-access outage invisible:
 - Public URL: `https://<tailnet-host>/`, gated by Caddy basic_auth (user
   `eric`, same password as `DINKIQ_PASSWORD`)
 
+**Auth model** (`server._basic_auth`): the app listens on `127.0.0.1` only and
+skips its password for exactly two kinds of request — one carrying
+`X-Dinkiq-Proxy: $DINKIQ_PROXY_SECRET` (Caddy injects it after its own
+basic_auth; the same value lives in `~/.vantage/caddy.env`, generated via the
+registry's `proxy_secret_env`), or a genuinely local one (loopback peer, loopback
+Host, no `X-Forwarded-*`/`Forwarded`). **Never trust the Host header alone** — it
+was the old exemption and any LAN/tailnet client could forge it. Consequence:
+`http://<lan-ip>:8100` no longer works; use the funnel URL, or localhost.
+
 The funnel is dedicated to this project: `projects.json` sets
 `"root_project": "dinkiq"`, which makes the `:8081` catch-all proxy here
 instead of the hub, and every sibling project is `enabled=false`. To
@@ -47,7 +56,7 @@ without it the server serves fine but every analysis dies with
 
 Config lives in the repo's gitignored `.env`, loaded process-wide by
 `server._load_dotenv()` (so `pipeline` sees it too):
-`DINKIQ_PASSWORD`, `DINKIQ_PUBLIC_URL` (deep link in notifications),
+`DINKIQ_PASSWORD`, `DINKIQ_PROXY_SECRET`, `DINKIQ_PUBLIC_URL` (deep link in notifications),
 `DINKIQ_WEBHOOK_URL` (analysis-finished push; URLs containing `ntfy`
 get a plain-text body, anything else Discord/Slack JSON).
 

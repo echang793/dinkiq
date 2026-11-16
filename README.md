@@ -36,8 +36,12 @@ tailscale funnel 8100              # in another terminal — prints the public h
 ```
 
 - Your Mac has to stay awake and the server running for friends to reach it.
-- `DINKIQ_PASSWORD` gates everyone except localhost with an HTTP Basic Auth
-  prompt (any username, that password) — leave it unset for local-only use.
+- `DINKIQ_PASSWORD` gates everyone except genuinely-local requests (loopback peer,
+  loopback Host, no forwarding headers) with an HTTP Basic Auth prompt (any
+  username, that password) — leave it unset for local-only use. The server
+  listens on 127.0.0.1 only (`DINKIQ_HOST` to change it); a reverse proxy
+  proves itself with `DINKIQ_PROXY_SECRET` via the `X-Dinkiq-Proxy` header.
+  The Host header is never trusted on its own.
 - `tailscale funnel status` shows the current public URL; `tailscale funnel off`
   stops sharing.
 - `DINKIQ_WEBHOOK_URL` (optional): a Discord webhook URL. Set it to get pinged
