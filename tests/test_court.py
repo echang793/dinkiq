@@ -38,9 +38,3 @@ def test_on_court_margin():
     assert on_court(10, 22)
     assert on_court(-2, 44)          # slightly out of bounds: still play
     assert not on_court(40, 22)      # nowhere near the court
-
-
-if __name__ == "__main__":
-    for fn in [test_corner_roundtrip, test_center_maps_inside_court, test_zones, test_on_court_margin]:
-        fn()
-        print(f"ok {fn.__name__}")

@@ -154,22 +154,3 @@ def test_shot_type_outcomes_empty_when_no_subject_ended_rallies():
     rallies = [{"start": 1.0, "end": 3.0}]
     outcomes = [{"last_hitter": "opponent1", "winner": "opponent1"}]
     assert shot_type_outcomes(shots, rallies, outcomes) == {}
-
-
-if __name__ == "__main__":
-    for fn in [test_attribute_hitters_nearest_swing, test_attribute_hitters_unknown_when_no_swing_matches,
-               test_attribute_hitters_doubles_four_way,
-               test_rally_outcomes_without_ball_assumes_last_hitter_wins,
-               test_rally_outcomes_ball_out_flips_winner_to_unforced_error,
-               test_rally_outcomes_ball_in_keeps_hitter_as_winner,
-               test_rally_outcomes_doubles_partner_hit_counts_as_my_team,
-               test_rally_outcomes_unknown_last_hitter,
-               test_point_summary_counts_and_rates, test_point_summary_doubles_hits_by_player,
-               test_point_summary_no_ball_adds_caveat,
-               test_point_summary_empty,
-               test_serve_side_win_rates_joins_by_rally_index,
-               test_serve_side_win_rates_skips_unknown_and_out_of_range,
-               test_shot_type_outcomes_joins_by_rally_end_time,
-               test_shot_type_outcomes_empty_when_no_subject_ended_rallies]:
-        fn()
-        print(f"ok {fn.__name__}")

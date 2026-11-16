@@ -77,11 +77,3 @@ def test_report_endpoint_404_before_done():
     finally:
         import shutil
         shutil.rmtree(sdir, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    for fn in [test_build_report_pdf_valid_bytes, test_build_report_pdf_handles_missing_dupr,
-               test_build_report_pdf_handles_empty_everything, test_report_endpoint_serves_pdf,
-               test_report_endpoint_404_before_done]:
-        fn()
-        print(f"ok {fn.__name__}")

@@ -182,7 +182,3 @@ def test_notify_webhook_never_raises_on_post_failure(monkeypatch, tmp_path):
     def boom(*a, **kw): raise ConnectionError("no network")
     monkeypatch.setattr("requests.post", boom)
     pipeline.notify_webhook(tmp_path, ok=True)  # must not raise
-
-
-if __name__ == "__main__":
-    print("run via pytest (uses monkeypatch/tmp_path fixtures)")

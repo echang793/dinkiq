@@ -331,24 +331,3 @@ def test_index_strips_trailing_slash_from_prefix():
     # produce a double slash in every request path
     r = client.get("/", headers={"X-Forwarded-Prefix": "/app/dinkiq/"})
     assert '<script>window.__BASE__="/app/dinkiq";</script>' in r.text
-
-
-if __name__ == "__main__":
-    for fn in [test_bulk_delete, test_delete_rejects_traversal_and_missing,
-               test_delete_empty_ids_rejected, test_soft_delete_then_restore,
-               test_meta_patch_notes_and_opponent, test_sessions_filter_by_label_and_opponent,
-               test_subject_marker_returns_earliest_frame_box,
-               test_subject_marker_no_tracks_parquet_degrades,
-               test_subject_marker_null_opponent_id_degrades,
-               test_subject_marker_missing_session_404s,
-               test_subject_marker_doubles_returns_partner_and_two_opponents,
-               test_upload_rejects_bad_match_type, test_calibrate_doubles_requires_partner_px,
-               test_meta_patch_context_accepts_valid_and_rejects_invalid,
-               test_sessions_filter_by_context,
-               test_calibrate_writes_last_calibration_corners_only,
-               test_last_calibration_unavailable_when_never_set,
-               test_index_has_no_base_when_served_directly,
-               test_index_injects_base_from_forwarded_prefix,
-               test_index_strips_trailing_slash_from_prefix]:
-        fn()
-        print(f"ok {fn.__name__}")

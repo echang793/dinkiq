@@ -73,10 +73,3 @@ def test_progress_empty_when_no_sessions():
     r = client.get("/api/progress")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
-
-
-if __name__ == "__main__":
-    for fn in [test_progress_surfaces_weakest_dimension, test_progress_surfaces_per_dimension_bands,
-               test_progress_empty_when_no_sessions]:
-        fn()
-        print(f"ok {fn.__name__}")

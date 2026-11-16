@@ -69,7 +69,7 @@ it takes seconds.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest tests/     # or run any tests/test_*.py standalone
+.venv/bin/python -m pytest tests/     # tests use a throwaway data dir (DINKIQ_DATA_DIR); run via pytest, not standalone
 ```
 
 ## API

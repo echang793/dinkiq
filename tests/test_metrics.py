@@ -97,13 +97,3 @@ def test_movement_curve_empty_for_short_track():
     pos = make_track([16.0, 16.0])  # ~2s, no buckets can accumulate MIN_BUCKET_SAMPLES gaps
     m = compute_metrics(pos, FPS)
     assert isinstance(m["movement_curve"], list)
-
-
-if __name__ == "__main__":
-    for fn in [test_zone_split, test_distance_glitch_capped, test_determinism,
-               test_heatmap_shape_and_mass, test_too_short_rejected,
-               test_secondary_court_tracks_warns,
-               test_movement_curve_separates_fast_and_slow_windows,
-               test_movement_curve_empty_for_short_track]:
-        fn()
-        print(f"ok {fn.__name__}")

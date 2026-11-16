@@ -80,11 +80,3 @@ def test_leaderboard_response_shape():
     r = client.get("/api/leaderboard")
     assert r.status_code == 200
     assert isinstance(r.json().get("players"), list)
-
-
-if __name__ == "__main__":
-    for fn in [test_leaderboard_aggregates_by_player_and_ranks_by_latest_band,
-               test_leaderboard_defaults_unset_player_and_excludes_incomplete,
-               test_leaderboard_empty_when_no_sessions]:
-        fn()
-        print(f"ok {fn.__name__}")

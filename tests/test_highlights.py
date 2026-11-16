@@ -82,12 +82,3 @@ def test_clear_derived_removes_stale_highlights():
     finally:
         import shutil
         shutil.rmtree(sdir, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    for fn in [test_build_highlights_picks_top_n_by_hits_and_concats,
-               test_build_highlights_none_without_events,
-               test_build_highlights_none_without_clip_files,
-               test_clear_derived_removes_stale_highlights]:
-        fn()
-        print(f"ok {fn.__name__}")

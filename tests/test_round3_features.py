@@ -258,17 +258,3 @@ def test_export_csv_contains_session_row():
         assert "Casey" in text
     finally:
         shutil.rmtree(d, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    for fn in [test_synergy_singles_session_unavailable, test_synergy_doubles_computes_separation_and_overlap,
-               test_opponent_scouting_aggregates_landing_sides, test_opponent_scouting_no_matches,
-               test_correct_point_updates_winner_and_summary,
-               test_correct_point_recomputes_serve_and_shot_type_breakdowns,
-               test_correct_point_out_of_range_404,
-               test_correct_point_invalid_winner_422, test_set_and_clear_clip_note,
-               test_stat_card_returns_png, test_stat_card_not_ready_409,
-               test_streak_response_shape, test_streak_counts_consecutive_days,
-               test_export_csv_contains_session_row]:
-        fn()
-        print(f"ok {fn.__name__}")

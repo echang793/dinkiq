@@ -171,18 +171,3 @@ def test_synergy_tip_flags_high_separation():
 def test_synergy_tip_none_when_balanced():
     tip = synergy_tip({"available": True, "coverage_overlap_pct": 10.0, "avg_separation_ft": 12.0})
     assert tip is None
-
-
-if __name__ == "__main__":
-    for fn in [test_interp_band_monotone_and_clamped, test_next_anchor_target_increasing_dimension,
-               test_next_anchor_target_decreasing_dimension, test_strong_player_beats_weak_player,
-               test_dimensions_include_unit_and_next_target, test_confidence_penalties,
-               test_unmeasurable_dims_omitted, test_tips_target_weakest,
-               test_drills_rank_all_weak_dimensions, test_drills_empty_when_nothing_weak,
-               test_drills_empty_when_unavailable, test_fatigue_note_flags_meaningful_drop,
-               test_fatigue_note_none_when_steady, test_fatigue_note_none_when_too_short,
-               test_synergy_tip_none_when_unavailable, test_synergy_tip_flags_high_overlap,
-               test_synergy_tip_flags_low_separation, test_synergy_tip_flags_high_separation,
-               test_synergy_tip_none_when_balanced]:
-        fn()
-        print(f"ok {fn.__name__}")

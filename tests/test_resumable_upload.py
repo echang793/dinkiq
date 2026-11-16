@@ -171,7 +171,3 @@ def test_finish_surfaces_capture_hint(monkeypatch):
             (server.SESSIONS / sid / "meta.json").read_text())
     finally:
         _cleanup(sid=sid, upload_id=uid)
-
-
-if __name__ == "__main__":
-    print("run via pytest")

@@ -130,14 +130,3 @@ def test_corroborate_hits_doubles_any_of_four_players_corroborates():
              "opponent1": np.array([3.01]), "opponent2": np.array([4.04])}
     kept = corroborate_hits(hits, swings)
     assert sorted(kept.tolist()) == [1.0, 2.0, 3.0, 4.0], kept
-
-
-if __name__ == "__main__":
-    for fn in [test_hits_survive_noise_speech_music, test_detect_hits_and_rallies,
-               test_swing_detection_and_attribution, test_wrist_speed_normalizes_by_court_width,
-               test_rally_metrics_empty,
-               test_corroborate_hits_drops_unswung_audio,
-               test_corroborate_hits_skips_filter_when_no_swings_tracked,
-               test_corroborate_hits_doubles_any_of_four_players_corroborates]:
-        fn()
-        print(f"ok {fn.__name__}")

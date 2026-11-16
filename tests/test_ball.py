@@ -122,11 +122,3 @@ def test_link_ignores_isolated_noise():
     df = link_tracks(cands, 50)
     assert df["seg"].nunique() == 1, df
     assert len(df) == 8
-
-
-if __name__ == "__main__":
-    for fn in [test_tracks_and_bounces, test_ball_detector_color_gate_accepts_bright_rejects_dark,
-              test_ball_detector_accepts_non_yellow_balls_rejects_blue,
-              test_detect_cuts_finds_hard_scene_change, test_link_ignores_isolated_noise]:
-        fn()
-        print(f"ok {fn.__name__}")

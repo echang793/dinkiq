@@ -35,7 +35,11 @@ from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject
                       subject_court_positions)
 
 ROOT = Path(__file__).resolve().parent.parent
-SESSIONS = ROOT / "data" / "sessions"
+# DINKIQ_DATA_DIR relocates all mutable state (sessions, uploads, trash, saved
+# calibration) -- the test suite points it at a temp dir so it can never touch
+# real sessions. Read once at import: server.py derives its paths from SESSIONS.
+DATA = Path(os.environ.get("DINKIQ_DATA_DIR") or ROOT / "data")
+SESSIONS = DATA / "sessions"
 MODELS = ROOT / "models"
 FPS = 30.0
 

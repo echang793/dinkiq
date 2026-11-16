@@ -152,16 +152,3 @@ def test_pick_opponents_n2_returns_both_far_side_players():
     subject_y = float(np.median(calib.to_court(feet_px(subject))[:, 1]))
     result = pick_opponents(df, calib, subject_ids | partner_ids, subject_y, n=2)
     assert set(result) == {3, 5}, result
-
-
-if __name__ == "__main__":
-    for fn in [test_stitch_follows_across_id_breaks, test_stitch_respects_gap_and_distance,
-               test_kitchen_anchored_homography_beats_bad_corners,
-               test_pick_opponent_finds_far_side_player,
-               test_pick_opponent_none_when_nobody_else_visible,
-               test_count_secondary_court_tracks_flags_doubles_partner,
-               test_count_secondary_court_tracks_zero_for_singles,
-               test_count_secondary_court_tracks_ignores_opponent_id_fragments,
-               test_pick_opponents_n2_returns_both_far_side_players]:
-        fn()
-        print(f"ok {fn.__name__}")

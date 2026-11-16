@@ -77,12 +77,3 @@ def test_opponent_history_no_matches():
     assert body["matches"] == 0
     assert body["win_pct"] is None
     assert body["sessions"] == []
-
-
-if __name__ == "__main__":
-    for fn in [test_opponent_history_aggregates_wins_and_losses,
-               test_opponent_history_case_insensitive,
-               test_opponent_history_excludes_unfinished_sessions,
-               test_opponent_history_no_matches]:
-        fn()
-        print(f"ok {fn.__name__}")

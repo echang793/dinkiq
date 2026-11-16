@@ -250,23 +250,3 @@ def test_opponent_shot_report_combines_opponent1_and_opponent2():
     rep = opponent_shot_report(hit_times, hitters, bounces)
     assert rep["shots_tracked"] == 2
     assert rep["side_counts"] == {"left": 1, "right": 1}
-
-
-if __name__ == "__main__":
-    for fn in [test_classify_rules, test_ball_speed_at, test_low_coverage_degrades,
-               test_serve_depth, test_serve_placement_recorded,
-               test_serve_rally_index_skips_non_subject_serves, test_serve_side_thirds,
-               test_subject_pos_at, test_shot_report_includes_position_when_available,
-               test_mph_from_norm, test_shot_report_includes_mph,
-               test_swing_speed_at_windowed_median,
-               test_shot_report_includes_swing_mph_when_ws_provided,
-               test_shot_report_swing_mph_absent_without_ws,
-               test_opponent_shot_landings_and_report, test_opponent_shot_report_empty_when_no_hits,
-               test_shot_report_with_hitters_adds_opponent_shots,
-               test_serve_depth_rejects_implausible_bounce,
-               test_serve_depth_picks_plausible_bounce_over_glitch,
-               test_opponent_shot_landings_rejects_implausible_bounce,
-               test_opponent_shot_report_combines_opponent1_and_opponent2,
-               test_shot_report_top_shot_t_points_at_the_fastest_shot]:
-        fn()
-        print(f"ok {fn.__name__}")

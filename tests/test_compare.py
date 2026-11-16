@@ -112,11 +112,3 @@ def test_compare_multi_requires_at_least_two():
     finally:
         import shutil
         shutil.rmtree(a, ignore_errors=True)
-
-
-if __name__ == "__main__":
-    for fn in [test_compare_computes_deltas, test_compare_missing_dupr_gives_null_delta,
-               test_compare_rejects_unready_session, test_compare_rejects_missing_session,
-               test_compare_multi_returns_all_summaries, test_compare_multi_requires_at_least_two]:
-        fn()
-        print(f"ok {fn.__name__}")

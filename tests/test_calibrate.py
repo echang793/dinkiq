@@ -46,9 +46,3 @@ def test_refuses_small_sample():
         _fake_session(root, "only", kitchen=30, transition=25, rally=6, known=3.5)
         cr.SESSIONS = root
         assert len(cr.load_labeled()) < cr.MIN_SESSIONS
-
-
-if __name__ == "__main__":
-    for fn in [test_fit_reduces_mae, test_refuses_small_sample]:
-        fn()
-        print(f"ok {fn.__name__}")

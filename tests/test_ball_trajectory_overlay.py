@@ -51,11 +51,3 @@ def test_shots_stage_empty_bounces_when_no_ball_track(tmp_path):
     import json
     report = json.loads((tmp_path / "shots.json").read_text())
     assert report["bounces_px"] == []
-
-
-if __name__ == "__main__":
-    import tempfile
-    for fn in [test_shots_stage_persists_pixel_bounces, test_shots_stage_empty_bounces_when_no_ball_track]:
-        with tempfile.TemporaryDirectory() as td:
-            fn(Path(td))
-        print(f"ok {fn.__name__}")
