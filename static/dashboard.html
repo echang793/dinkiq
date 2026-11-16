@@ -974,7 +974,11 @@ function doUpload(f) {
 // retried from the offset the server reports it actually has.
 const UPLOAD_CHUNK = 8 << 20;   // 8 MB
 const UPLOAD_RETRIES = 5;
-async function resumableUpload(f, matchType, done, fail) {
+// opts.sessionId: replace that session's video instead of creating a session.
+// opts.onProgress(frac, loaded, total): defaults to the Home upload bar.
+async function resumableUpload(f, matchType, done, fail, opts = {}) {
+  const target = opts.sessionId ? {session_id: opts.sessionId} : {};
+  const onProgress = opts.onProgress || setUpProgress;
   const post = async (url, body) => {
     const r = await fetch(BASE + url, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
@@ -983,7 +987,7 @@ async function resumableUpload(f, matchType, done, fail) {
   };
   let init;
   try {
-    init = await post('/api/upload/init', {filename: f.name, match_type: matchType});
+    init = await post('/api/upload/init', {filename: f.name, match_type: matchType, size: f.size, ...target});
   } catch (e) {
     // no resumable endpoints (older server) or no backend at all
     if (e.status === 404 || e.status === undefined) { enableDemo(); demoUpload(f, done); return; }
@@ -1012,9 +1016,9 @@ async function resumableUpload(f, matchType, done, fail) {
           try { offset = (await api('/upload/' + id)).offset; } catch (e2) { /* retry blind */ }
         }
       }
-      setUpProgress(offset / f.size, offset, f.size);
+      onProgress(offset / f.size, offset, f.size);
     }
-    done(await post('/api/upload/' + id + '/finish', {filename: f.name, match_type: matchType}));
+    done(await post('/api/upload/' + id + '/finish', {filename: f.name, match_type: matchType, ...target}));
   } catch (e) {
     fail(parseDetail(e.body) || e.message);
   }
@@ -1914,20 +1918,34 @@ async function loadHeadToHead() {
 async function doReupload() {
   const f = $('mReuploadFile').files[0];
   if (!f || !sid) return;
+  if (!/\.(mp4|mov|m4v)$/i.test(f.name)) return toast('Only MP4 / MOV / M4V files are supported', true);
+  const target = sid;
   const mt = lastSession && lastSession.meta && lastSession.meta.match_type;
-  const fd = new FormData();
-  fd.append('file', f);
-  try {
-    await api('/session/' + sid + '/reupload', { method: 'POST', body: fd });
+  // same chunked, resumable path as a first upload (the old single multipart
+  // POST had no progress, no retry and no size limit)
+  lastMsgStage = null;
+  show('proc'); renderProcSteps('ingest');
+  $('procMsg').textContent = 'Uploading replacement video…';
+  $('procEta').textContent = '';
+  resumableUpload(f, mt || 'singles', () => {
     toast('Video replaced — reprocessing…');
+    $('procMsg').textContent = 'Preparing video…';
     // reupload only re-ingests (extracts frames), it doesn't re-analyze —
     // that needs a fresh calibration, same as a brand-new upload. Waiting
     // on stage==='done' here would hang forever since nothing advances
     // the pipeline past ingest until calibration is submitted.
-    lastMsgStage = null;
-    show('proc'); renderProcSteps('ingest');
     waitFor(s => s.stage === 'ingest' && s.state === 'done', () => startCalib(mt), 'Preparing video', true);
-  } catch (e) { toast('Replace failed: ' + e, true); }
+  }, msg => {
+    toast('Replace failed: ' + msg, true);
+    openSession(target);  // the original is untouched — go back to it
+  }, {
+    sessionId: target,
+    onProgress: frac => {
+      const pct = Math.round(frac * 100);
+      $('procBar').style.width = pct + '%';
+      $('procPct').textContent = pct + '%';
+    },
+  });
 }
 
 /* ---------------- sessions list ---------------- */

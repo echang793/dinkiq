@@ -137,7 +137,7 @@ def test_a_recovery_failure_does_not_stop_the_server_starting(monkeypatch):
         assert c.get("/api/sessions").status_code == 200
 
 
-# ── delete / reupload refuse a busy session ─────────────────────────────
+# ── delete / replace refuse a busy session ─────────────────────────────
 
 @pytest.mark.parametrize("state", ["running", "queued"])
 def test_delete_refuses_a_session_that_is_processing(state):
@@ -156,18 +156,11 @@ def test_bulk_delete_skips_only_the_busy_session():
     assert body["deleted"] == ["idle2"] and busy.exists() and not idle.exists()
 
 
-def test_reupload_refuses_a_session_that_is_processing():
-    d = _mk("busy3", {"stage": "tracking", "state": "running"}, raw="raw.mp4")
-    r = client.post("/api/session/busy3/reupload", files={"file": ("n.mp4", b"new", "video/mp4")})
-    assert r.status_code == 409
-    assert (d / "raw.mp4").read_bytes() == b"x"  # original untouched
-
-
-# ── reupload validates the replacement BEFORE destroying the original ───
+# ── replacing a video validates BEFORE destroying the original ──────────
+# (chunked path: init{session_id} -> PUT chunks -> finish{session_id})
 
 def _arm_reupload(monkeypatch, readable=True):
     monkeypatch.setattr(pipeline, "ingest", lambda sdir, raw: None)
-    monkeypatch.setattr(pipeline, "_spawn_ingest", lambda sdir, raw: None, raising=False)
     monkeypatch.setattr(pipeline, "probe_video", lambda p: (
         {"codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 300, "duration": 10.0}
         if readable else {"codec": None, "width": 0, "height": 0, "fps": 0.0, "frames": 0, "duration": 0.0}))
@@ -175,45 +168,88 @@ def _arm_reupload(monkeypatch, readable=True):
                         lambda target, args, daemon: type("T", (), {"start": lambda self: None})())
 
 
-def test_reupload_of_an_unreadable_file_keeps_the_original(monkeypatch):
+def _replace(sid, filename="new.mp4", data=b"fresh"):
+    """Run the whole replacement flow; return the first non-200 response, else finish's."""
+    init = client.post("/api/upload/init", json={"filename": filename, "session_id": sid})
+    if init.status_code != 200:
+        return init
+    uid = init.json()["upload_id"]
+    put = client.put(f"/api/upload/{uid}?offset=0", content=data)
+    if put.status_code != 200:
+        return put
+    return client.post(f"/api/upload/{uid}/finish", json={"filename": filename, "session_id": sid})
+
+
+def test_replacing_a_session_that_is_processing_is_refused_up_front():
+    d = _mk("busy3", {"stage": "tracking", "state": "running"}, raw="raw.mp4")
+    r = client.post("/api/upload/init", json={"filename": "n.mp4", "session_id": "busy3"})
+    assert r.status_code == 409  # refused at init, before any bytes are sent
+    assert (d / "raw.mp4").read_bytes() == b"x"
+
+
+def test_session_that_became_busy_after_init_is_still_refused_at_finish(monkeypatch):
+    _arm_reupload(monkeypatch)
+    d = _mk("busy4", {"stage": "done", "state": "done"}, raw="raw.mp4")
+    uid = client.post("/api/upload/init", json={"filename": "n.mp4", "session_id": "busy4"}).json()["upload_id"]
+    client.put(f"/api/upload/{uid}?offset=0", content=b"new")
+    (d / "status.json").write_text(json.dumps({"stage": "tracking", "state": "running"}))
+    r = client.post(f"/api/upload/{uid}/finish", json={"filename": "n.mp4", "session_id": "busy4"})
+    assert r.status_code == 409 and (d / "raw.mp4").read_bytes() == b"x"
+
+
+def test_replacing_an_unknown_or_malformed_session_is_rejected():
+    assert client.post("/api/upload/init", json={"filename": "n.mp4", "session_id": "nope"}).status_code == 404
+    assert client.post("/api/upload/init", json={"filename": "n.mp4", "session_id": ".trash"}).status_code == 400
+
+
+def test_replacement_of_an_unreadable_file_keeps_the_original(monkeypatch):
     _arm_reupload(monkeypatch, readable=False)
     d = _mk("re1", {"stage": "done", "state": "done"}, raw="raw.mp4")
     (d / "video.mp4").write_bytes(b"good analysed video")
     (d / "metrics.json").write_text("{}")
-    r = client.post("/api/session/re1/reupload", files={"file": ("junk.mp4", b"not a video", "video/mp4")})
+    r = _replace("re1", "junk.mp4", b"not a video")
     assert r.status_code == 400 and "original was kept" in r.json()["detail"]
     assert (d / "raw.mp4").read_bytes() == b"x"
     assert (d / "video.mp4").exists() and (d / "metrics.json").exists()  # analysis not wiped
     assert not list(d.glob("incoming*"))  # no stray temp file
 
 
-def test_reupload_with_bad_extension_keeps_the_original(monkeypatch):
+def test_replacement_with_bad_extension_is_rejected_at_init(monkeypatch):
     _arm_reupload(monkeypatch)
     d = _mk("re2", {"stage": "done", "state": "done"}, raw="raw.mp4")
-    r = client.post("/api/session/re2/reupload", files={"file": ("notes.txt", b"hi", "text/plain")})
-    assert r.status_code == 400
+    assert _replace("re2", "notes.txt", b"hi").status_code == 400
     assert (d / "raw.mp4").read_bytes() == b"x"
 
 
-def test_reupload_over_the_size_limit_keeps_the_original(monkeypatch):
+def test_replacement_over_the_size_limit_keeps_the_original(monkeypatch):
     _arm_reupload(monkeypatch)
     monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 5)
     d = _mk("re3", {"stage": "done", "state": "done"}, raw="raw.mp4")
-    r = client.post("/api/session/re3/reupload", files={"file": ("big.mp4", b"0123456789", "video/mp4")})
-    assert r.status_code == 413
-    assert (d / "raw.mp4").read_bytes() == b"x" and not list(d.glob("incoming*"))
+    assert _replace("re3", "big.mp4", b"0123456789").status_code == 413
+    assert (d / "raw.mp4").read_bytes() == b"x"
 
 
-def test_reupload_of_a_good_file_swaps_it_in_and_clears_derived(monkeypatch):
+def test_replacement_with_a_good_file_swaps_it_in_and_clears_derived(monkeypatch):
     _arm_reupload(monkeypatch)
     d = _mk("re4", {"stage": "done", "state": "done"}, raw="raw.mov", calibrated=True)
     (d / "video.mp4").write_bytes(b"old")
     (d / "metrics.json").write_text("{}")
-    r = client.post("/api/session/re4/reupload", files={"file": ("new.mp4", b"fresh", "video/mp4")})
-    assert r.status_code == 200
+    r = _replace("re4", "new.mp4", b"fresh")
+    assert r.status_code == 200 and r.json()["session_id"] == "re4"
     assert (d / "raw.mp4").read_bytes() == b"fresh" and not (d / "raw.mov").exists()
     assert not (d / "video.mp4").exists() and not (d / "metrics.json").exists()
     assert not (d / "calibration.json").exists()
+    assert json.loads((d / "meta.json").read_text())["filename"] == "new.mp4"
+    assert _status(d) == {"stage": "ingest", "state": "running", "overall": 0.0}  # not the old "done"
+
+
+def test_the_unbounded_multipart_endpoints_are_gone():
+    """python-multipart spools the whole body to disk before any handler runs,
+    so these ignored the 2 GB limit; the chunked path replaces both."""
+    _mk("mp1", {"stage": "done", "state": "done"})
+    files = {"file": ("c.mp4", b"x", "video/mp4")}
+    assert client.post("/api/upload", files=files).status_code in (404, 405)
+    assert client.post("/api/session/mp1/reupload", files=files).status_code in (404, 405)
 
 
 # ── concurrent chunk PUTs can't duplicate bytes ─────────────────────────

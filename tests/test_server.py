@@ -143,29 +143,6 @@ def test_sessions_filter_by_context():
         shutil.rmtree(b, ignore_errors=True)
 
 
-def test_reupload_replaces_video_and_clears_derived(monkeypatch):
-    import pipeline
-    monkeypatch.setattr(pipeline, "ingest", lambda sdir, raw: None)  # skip real ffmpeg
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: {   # a readable video
-        "codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 300, "duration": 10.0})
-    d = _mk("testreup_a")
-    (d / "video.mp4").write_bytes(b"old")
-    (d / "metrics.json").write_text("{}")
-    try:
-        r = client.post("/api/session/testreup_a/reupload",
-                        files={"file": ("clip2.mp4", b"fake bytes", "video/mp4")})
-        assert r.status_code == 200
-        assert r.json()["session_id"] == "testreup_a"
-        assert not (d / "video.mp4").exists()  # cleared for re-ingest
-        assert not (d / "metrics.json").exists()  # derived artifacts cleared
-        assert (d / "raw.mp4").exists()
-        meta = json.loads((d / "meta.json").read_text())
-        assert meta["filename"] == "clip2.mp4"
-    finally:
-        import shutil
-        shutil.rmtree(d, ignore_errors=True)
-
-
 def test_subject_marker_returns_earliest_frame_box():
     d = _mk("testmarker_a")
     try:
@@ -227,12 +204,6 @@ def test_subject_marker_null_opponent_id_degrades():
 def test_subject_marker_missing_session_404s():
     r = client.get("/api/session/does_not_exist_xyz/subject-marker")
     assert r.status_code == 404
-
-
-def test_upload_rejects_bad_match_type():
-    r = client.post("/api/upload", files={"file": ("clip.mp4", b"x", "video/mp4")},
-                    data={"match_type": "triples"})
-    assert r.status_code == 400
 
 
 def test_calibrate_doubles_requires_partner_px():

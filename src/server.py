@@ -11,12 +11,13 @@ import re
 import secrets
 import shutil
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
@@ -62,6 +63,22 @@ class SafeJSONResponse(JSONResponse):
 log = logging.getLogger("dinkiq")
 
 
+def _maintenance_once() -> None:
+    """Housekeeping that used to run only when someone happened to start an
+    upload or open the trash view: abandoned partials and expired trash."""
+    _sweep_uploads()
+    _sweep_trash()
+
+
+async def _maintenance_loop() -> None:
+    while True:
+        await asyncio.sleep(MAINTENANCE_INTERVAL_S)
+        try:
+            await asyncio.to_thread(_maintenance_once)
+        except Exception:
+            log.exception("maintenance pass failed (will retry)")
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # The job queue is in memory only: repair whatever a restart/crash stranded
@@ -72,7 +89,19 @@ async def _lifespan(app: FastAPI):
             log.warning("startup recovery: %s", recovered)
     except Exception:
         log.exception("startup recovery failed (continuing)")
-    yield
+    try:
+        _maintenance_once()
+    except Exception:
+        log.exception("startup maintenance failed (continuing)")
+    task = asyncio.create_task(_maintenance_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(title="DinkIQ", default_response_class=SafeJSONResponse, lifespan=_lifespan)
@@ -260,28 +289,6 @@ MAX_UPLOAD_BYTES = 2 << 30  # 2 GB
 WARN_DURATION_S = 30 * 60
 
 
-async def _save_upload(sdir: Path, file: UploadFile, stem: str = "raw") -> Path:
-    """Validate extension + size, stream file into sdir/{stem}{ext}. Raises
-    HTTPException on bad ext / oversize; cleans up its own partial write but
-    leaves sdir itself for the caller to manage. A replacement upload uses
-    stem="incoming" so it can never overwrite the original before it has been
-    checked."""
-    ext = Path(file.filename or "clip.mp4").suffix.lower()
-    if ext not in ALLOWED_EXT:
-        raise HTTPException(400, f"unsupported file type {ext}")
-    raw = sdir / f"{stem}{ext}"
-    written = 0
-    with raw.open("wb") as f:
-        while chunk := await file.read(1 << 20):
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                f.close()
-                raw.unlink(missing_ok=True)
-                raise HTTPException(413, "upload exceeds 2 GB limit")
-            f.write(chunk)
-    return raw
-
-
 MATCH_TYPES = {"singles", "doubles"}
 
 # ── Resumable upload ──────────────────────────────────────────────────────
@@ -290,6 +297,10 @@ MATCH_TYPES = {"singles", "doubles"}
 # the client append in chunks and, after a drop, ask where to pick up.
 UPLOADS = SESSIONS.parent / "uploads"
 UPLOAD_TTL_S = 24 * 3600
+MIN_FREE_BYTES = 2 << 30          # keep this much disk free; below it, refuse uploads
+MAX_PARTIAL_UPLOADS = 6           # open resumable uploads at once
+STALE_PARTIAL_S = 3600            # an idle partial this old may be reclaimed to make room
+MAINTENANCE_INTERVAL_S = 3600
 # One writer per upload. A phone that times out retries a chunk while the server
 # is still receiving the first attempt; without this both pass the offset check
 # and both append, duplicating bytes.
@@ -306,7 +317,6 @@ def _upload_part(upload_id: str) -> Path:
 
 def _sweep_uploads() -> None:
     """Drop abandoned partials so a failed 2 GB upload can't sit forever."""
-    import time
     if not UPLOADS.exists():
         return
     now = time.time()
@@ -319,6 +329,8 @@ def _sweep_uploads() -> None:
 class UploadInit(BaseModel):
     filename: str = Field(max_length=260)
     match_type: str = "singles"
+    size: int | None = Field(default=None, ge=0)  # declared bytes; lets us refuse early
+    session_id: str | None = None                  # set when replacing a session's video
 
     @field_validator("match_type")
     @classmethod
@@ -328,12 +340,44 @@ class UploadInit(BaseModel):
         return v
 
 
+def _free_bytes() -> int:
+    UPLOADS.mkdir(parents=True, exist_ok=True)
+    return shutil.disk_usage(UPLOADS).free
+
+
+def _open_partials() -> list[Path]:
+    if not UPLOADS.exists():
+        return []
+    return sorted(UPLOADS.glob("*.part"), key=lambda f: f.stat().st_mtime)
+
+
+def _reserve_partial_slot() -> None:
+    """Refuse when too many uploads are open -- but first reclaim abandoned ones,
+    oldest first, so a phone that gave up mid-upload can't lock you out. An
+    upload that is still receiving chunks is never touched."""
+    parts = _open_partials()
+    while len(parts) >= MAX_PARTIAL_UPLOADS and time.time() - parts[0].stat().st_mtime > STALE_PARTIAL_S:
+        stale = parts.pop(0)
+        stale.unlink(missing_ok=True)
+        _upload_locks.pop(stale.stem, None)
+    if len(parts) >= MAX_PARTIAL_UPLOADS:
+        raise HTTPException(429, "too many uploads in progress — finish or wait for one to expire")
+
+
 @app.post("/api/upload/init")
 def upload_init(req: UploadInit):
     ext = Path(req.filename).suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"unsupported file type {ext}")
+    if req.session_id is not None:  # replacing a video: fail now, not after 2 GB
+        _refuse_if_busy(_sdir(req.session_id))
+    if req.size is not None and req.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "upload exceeds 2 GB limit")
+    free = _free_bytes()
+    if free - (req.size or 0) < MIN_FREE_BYTES:
+        raise HTTPException(507, f"not enough disk space on the server ({free / (1 << 30):.1f} GB free)")
     _sweep_uploads()
+    _reserve_partial_slot()
     UPLOADS.mkdir(parents=True, exist_ok=True)
     upload_id = uuid.uuid4().hex
     _upload_part(upload_id).touch()
@@ -361,6 +405,8 @@ async def upload_chunk(upload_id: str, request: Request, offset: int = 0):
         if offset != have:
             # not an error the client can't recover from — tell it where we are
             raise HTTPException(409, f"offset mismatch: server has {have}")
+        if _free_bytes() < MIN_FREE_BYTES:
+            raise HTTPException(507, "server disk is nearly full — upload stopped; free some space and resume")
         with part.open("ab") as f:
             async for chunk in request.stream():
                 have += len(chunk)
@@ -375,6 +421,7 @@ async def upload_chunk(upload_id: str, request: Request, offset: int = 0):
 class UploadFinish(BaseModel):
     filename: str = Field(max_length=260)
     match_type: str = "singles"
+    session_id: str | None = None  # set when this upload replaces a session's video
 
     @field_validator("match_type")
     @classmethod
@@ -396,6 +443,14 @@ def upload_finish(upload_id: str, req: UploadFinish):
     if part.stat().st_size == 0:
         part.unlink(missing_ok=True)
         raise HTTPException(400, "no data uploaded")
+
+    if req.session_id is not None:
+        sdir = _sdir(req.session_id)
+        _refuse_if_busy(sdir)  # may have started processing since init
+        incoming = sdir / f"incoming{ext}"
+        shutil.move(str(part), str(incoming))
+        _upload_locks.pop(upload_id, None)
+        return _replace_video(sdir, incoming, req.filename)
 
     sid = uuid.uuid4().hex[:12]
     sdir = SESSIONS / sid
@@ -446,21 +501,6 @@ def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dic
             "warning": meta.get("warning"), "capture_hint": hint}
 
 
-@app.post("/api/upload")
-async def upload(file: UploadFile, match_type: str = Form("singles")):
-    if match_type not in MATCH_TYPES:
-        raise HTTPException(400, f"match_type must be one of {sorted(MATCH_TYPES)}")
-    sid = uuid.uuid4().hex[:12]
-    sdir = SESSIONS / sid
-    sdir.mkdir(parents=True)
-    try:
-        raw = await _save_upload(sdir, file)
-    except HTTPException:
-        shutil.rmtree(sdir)
-        raise
-    return _start_session(sdir, raw, file.filename, match_type)
-
-
 def _refuse_if_busy(sdir: Path) -> None:
     if pipeline.is_busy(sdir):
         raise HTTPException(409, "session is still processing")
@@ -500,17 +540,6 @@ def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
     threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
     return {"session_id": sdir.name, "duration_s": dur,
             "warning": meta.get("warning"), "capture_hint": hint}
-
-
-@app.post("/api/session/{sid}/reupload")
-async def reupload(sid: str, file: UploadFile):
-    """Replace a session's source video without changing its session id —
-    for when the first upload was wrong or corrupt. Clears all derived
-    analysis artifacts and re-runs ingest."""
-    sdir = _sdir(sid)
-    _refuse_if_busy(sdir)
-    incoming = await _save_upload(sdir, file, stem="incoming")
-    return _replace_video(sdir, incoming, file.filename)
 
 
 TRASH = SESSIONS / ".trash"
@@ -718,8 +747,6 @@ def delete_sessions(req: BulkDelete):
     """Soft-delete: move each session into .trash/ (restorable) rather than
     deleting outright. Trash is purged lazily (see _sweep_trash) after
     TRASH_RETENTION_S."""
-    import time
-
     deleted, errors = [], []
     for sid in req.ids:
         try:
@@ -748,8 +775,6 @@ def delete_sessions(req: BulkDelete):
 
 def _sweep_trash() -> None:
     """Purge trashed sessions older than the retention window."""
-    import time
-
     if not TRASH.exists():
         return
     now = time.time()
