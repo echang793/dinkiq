@@ -1,14 +1,14 @@
-fastapi>=0.115
-uvicorn>=0.30
-python-multipart>=0.0.9
-opencv-python>=4.10
-ultralytics>=8.3
-numpy>=1.26
-pandas>=2.2
-pyarrow>=17.0
-librosa>=0.10
-httpx2
-pytest
-reportlab>=4.0
-requests>=2.31
-Pillow>=10.1
+# Direct runtime dependencies, pinned to the versions the app is tested with.
+# For the EXACT environment (including transitive deps such as torch) install
+# from requirements.lock instead -- that is what the service actually runs.
+fastapi==0.139.0
+uvicorn==0.51.0
+opencv-python==5.0.0.93
+ultralytics==8.4.92
+numpy==2.4.6
+pandas==3.0.3
+pyarrow==25.0.0
+librosa==0.11.0
+reportlab==5.0.0
+requests==2.34.2
+Pillow==12.3.0

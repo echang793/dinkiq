@@ -6,12 +6,25 @@ DUPR-style skill estimate. "A pickleball coach that fits in your pocket."
 ## Setup
 
 ```bash
-brew install ffmpeg                       # video processing
-/opt/homebrew/bin/python3.13 -m venv .venv   # torch requires <=3.13
-.venv/bin/pip install -r requirements.txt
+brew install ffmpeg                          # video processing
+/opt/homebrew/bin/python3.13 -m venv .venv   # torch requires <=3.13 (see .python-version)
+.venv/bin/pip install -r requirements.lock   # the exact tested environment
+# development (tests, lint):  .venv/bin/pip install -r requirements-dev.txt
 ```
 
-YOLO weights auto-download to `models/` on first run (yolov8n-pose).
+`requirements.txt` lists the direct dependencies (pinned); `requirements.lock` is the
+full freeze, including transitive ones like torch, and is what the service runs.
+
+Fetch the pose weights **explicitly, into a path with no apostrophe** (ultralytics
+silently strips `'` from weight paths, so a repo under e.g. `Eric's MacBook/` never
+finds them and tries to download elsewhere):
+
+```bash
+.venv/bin/python -c "from ultralytics.utils.downloads import attempt_download_asset as d; d('models/yolov8s-pose.pt')"
+```
+
+`GET /api/health` reports a missing tool, missing weights, a low disk or a dead
+analysis worker (200 only when everything is fine).
 
 ## Run
 
