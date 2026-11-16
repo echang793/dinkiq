@@ -21,6 +21,9 @@ from fastapi.testclient import TestClient
 
 import jsonio
 import pipeline
+import media
+import jobs
+import session_status
 import server
 
 client = TestClient(server.app)
@@ -130,18 +133,18 @@ def test_corrupt_artifact_json_does_not_500_the_session_endpoint():
 def test_corrupt_status_is_reported_as_error_so_the_user_can_reprocess():
     d = _mk("bad3")
     (d / "status.json").write_text('{"stage": "tra')
-    st = pipeline.get_status(d)
+    st = session_status.get_status(d)
     assert st["state"] == "error" and "unreadable" in st["error"]
     # state "error" is what unlocks recalibrate/reprocess in the UI
     assert server._calibratable(st)
 
 
 def test_missing_status_is_still_new_idle():
-    assert pipeline.get_status(_mk("fresh")) == {"stage": "new", "state": "idle"}
+    assert session_status.get_status(_mk("fresh")) == {"stage": "new", "state": "idle"}
 
 
 def test_set_status_is_atomic_no_temp_files(tmp_path):
-    pipeline.set_status(tmp_path, "tracking", "running", progress=0.5)
+    session_status.set_status(tmp_path, "tracking", "running", progress=0.5)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["status.json"]
 
 
@@ -201,7 +204,7 @@ def test_calibrate_rejects_malformed_points():
 def test_calibrate_accepts_corners_slightly_outside_the_frame(monkeypatch):
     """Far corners are often off-frame; the UI allows 25% padding."""
     _ready_session()
-    monkeypatch.setattr(pipeline, "enqueue_analyze", lambda sdir: None)
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: {"width": 1280, "height": 720})
+    monkeypatch.setattr(jobs, "enqueue_analyze", lambda sdir: None)
+    monkeypatch.setattr(media, "probe_video", lambda p: {"width": 1280, "height": 720})
     ok = {**GOOD, "corners_px": [[-300, -100], [1500, -100], [1700, 900], [-400, 900]]}
     assert client.post("/api/session/cal1/calibrate", json=ok).status_code == 200

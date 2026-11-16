@@ -20,6 +20,10 @@ from fastapi.testclient import TestClient
 
 import logsetup
 import pipeline
+import jobs
+import media
+import notify
+import session_status
 import server
 
 client = TestClient(server.app)
@@ -78,7 +82,7 @@ def test_health_fails_when_the_data_dir_is_not_writable(healthy, monkeypatch):
 
 
 def test_health_reports_a_dead_analysis_worker(healthy, monkeypatch):
-    monkeypatch.setattr(pipeline, "worker_status", lambda: {"started": True, "alive": False,
+    monkeypatch.setattr(jobs, "worker_status", lambda: {"started": True, "alive": False,
                                                             "queued": 2, "running": "abc"})
     r = client.get("/api/health")
     assert r.status_code == 503
@@ -86,7 +90,7 @@ def test_health_reports_a_dead_analysis_worker(healthy, monkeypatch):
 
 
 def test_worker_never_started_is_fine(healthy, monkeypatch):
-    monkeypatch.setattr(pipeline, "worker_status", lambda: {"started": False, "alive": None,
+    monkeypatch.setattr(jobs, "worker_status", lambda: {"started": False, "alive": None,
                                                             "queued": 0, "running": None})
     assert client.get("/api/health").json()["checks"]["worker"]["ok"] is True
 
@@ -177,19 +181,19 @@ def test_uvicorn_log_config_is_none_when_the_dir_is_unwritable():
 def _no_ffprobe(monkeypatch):
     def boom(*a, **k):
         raise FileNotFoundError(2, "No such file or directory", "ffprobe")
-    monkeypatch.setattr(pipeline.subprocess, "run", boom)
+    monkeypatch.setattr(media.subprocess, "run", boom)
 
 
 def test_probe_video_raises_a_clear_error_when_ffprobe_is_missing(monkeypatch, tmp_path):
     _no_ffprobe(monkeypatch)
-    with pytest.raises(pipeline.ToolMissing, match="ffprobe"):
-        pipeline.probe_video(tmp_path / "x.mp4")
+    with pytest.raises(media.ToolMissing, match="ffprobe"):
+        media.probe_video(tmp_path / "x.mp4")
 
 
 def test_run_raises_a_clear_error_when_ffmpeg_is_missing(monkeypatch):
     _no_ffprobe(monkeypatch)
-    with pytest.raises(pipeline.ToolMissing, match="PATH"):
-        pipeline._run(["ffmpeg", "-version"])
+    with pytest.raises(media.ToolMissing, match="PATH"):
+        media._run(["ffmpeg", "-version"])
 
 
 def test_finishing_an_upload_without_ffprobe_is_a_503_with_no_orphan(monkeypatch):
@@ -220,7 +224,7 @@ def test_replacing_a_video_without_ffprobe_is_a_503_and_keeps_the_original(monke
 @pytest.fixture
 def notes(monkeypatch):
     seen = []
-    monkeypatch.setattr(pipeline, "notify_webhook",
+    monkeypatch.setattr(notify, "notify_webhook",
                         lambda sdir, ok, error=None, **kw: seen.append((sdir.name, ok, error, kw)))
     return seen
 
@@ -230,10 +234,10 @@ def test_unreadable_video_at_ingest_sends_a_failure_notification(monkeypatch, tm
     sdir.mkdir()
     raw = sdir / "raw.mp4"
     raw.write_bytes(b"junk")
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: {
+    monkeypatch.setattr(media, "probe_video", lambda p: {
         "codec": None, "width": 0, "height": 0, "fps": 0.0, "frames": 0, "duration": 0.0})
-    pipeline.ingest(sdir, raw)
-    assert pipeline.get_status(sdir)["state"] == "error"
+    media.ingest(sdir, raw)
+    assert session_status.get_status(sdir)["state"] == "error"
     assert len(notes) == 1 and notes[0][1] is False and "unreadable" in notes[0][2]
 
 
@@ -242,14 +246,14 @@ def test_ffmpeg_crash_at_ingest_sends_a_failure_notification(monkeypatch, tmp_pa
     sdir.mkdir()
     raw = sdir / "raw.mp4"
     raw.write_bytes(b"x")
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: {
+    monkeypatch.setattr(media, "probe_video", lambda p: {
         "codec": "hevc", "width": 3840, "height": 2160, "fps": 60.0, "frames": 100, "duration": 2.0})
 
     def die(cmd):
         raise RuntimeError("ffmpeg failed: Invalid data found when processing input")
-    monkeypatch.setattr(pipeline, "_run", die)
-    pipeline.ingest(sdir, raw)
-    assert pipeline.get_status(sdir)["state"] == "error"
+    monkeypatch.setattr(media, "_run", die)
+    media.ingest(sdir, raw)
+    assert session_status.get_status(sdir)["state"] == "error"
     assert len(notes) == 1 and notes[0][1] is False
 
 
@@ -259,25 +263,25 @@ def test_successful_ingest_does_not_notify(monkeypatch, tmp_path, notes):
     raw = sdir / "raw.mp4"
     raw.write_bytes(b"x")
     info = {"codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 100, "duration": 3.3}
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: info)
-    monkeypatch.setattr(pipeline, "_run", lambda cmd: None)
-    monkeypatch.setattr(pipeline, "_has_audio", lambda p: False)
-    pipeline.ingest(sdir, raw)
-    assert pipeline.get_status(sdir)["state"] == "done" and notes == []
+    monkeypatch.setattr(media, "probe_video", lambda p: info)
+    monkeypatch.setattr(media, "_run", lambda cmd: None)
+    monkeypatch.setattr(media, "_has_audio", lambda p: False)
+    media.ingest(sdir, raw)
+    assert session_status.get_status(sdir)["state"] == "done" and notes == []
 
 
 def test_failure_message_says_what_failed():
-    msg = pipeline.notify_message(Path("/nonexistent/sess"), ok=False, error="bad file", what="prepare the video")
+    msg = notify.notify_message(Path("/nonexistent/sess"), ok=False, error="bad file", what="prepare the video")
     assert "failed to prepare the video" in msg and "bad file" in msg
-    assert "failed to analyze" in pipeline.notify_message(Path("/nonexistent/sess"), ok=False, error="x")
+    assert "failed to analyze" in notify.notify_message(Path("/nonexistent/sess"), ok=False, error="x")
 
 
 def test_worker_status_reflects_the_queue():
-    st = pipeline.worker_status()
+    st = jobs.worker_status()
     assert set(st) == {"started", "alive", "queued", "running"}
     assert isinstance(st["queued"], int)
 
 
 def test_subprocess_error_type_is_still_a_runtime_error():
-    assert issubclass(pipeline.ToolMissing, RuntimeError)
+    assert issubclass(media.ToolMissing, RuntimeError)
     assert subprocess  # (imported for the monkeypatches above)

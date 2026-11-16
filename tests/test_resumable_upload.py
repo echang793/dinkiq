@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fastapi.testclient import TestClient
 
 import server
+import media
 
 client = TestClient(server.app)
 
@@ -110,7 +111,7 @@ def test_finish_creates_session_and_starts_ingest(monkeypatch):
     monkeypatch.setattr(server.threading, "Thread",
                         lambda target, args, daemon: type(
                             "T", (), {"start": lambda self: started.append(args)})())
-    monkeypatch.setattr(server.pipeline, "probe_video", lambda p: {"duration": 12.0})
+    monkeypatch.setattr(media, "probe_video", lambda p: {"duration": 12.0})
     uid = _init()
     sid = None
     try:
@@ -157,7 +158,7 @@ def test_finish_surfaces_capture_hint(monkeypatch):
     monkeypatch.setattr(server.threading, "Thread",
                         lambda target, args, daemon: type(
                             "T", (), {"start": lambda self: None})())
-    monkeypatch.setattr(server.pipeline, "probe_video",
+    monkeypatch.setattr(media, "probe_video",
                         lambda p: {"duration": 10.0, "height": 2160, "fps": 60.0})
     uid = _init()
     sid = None

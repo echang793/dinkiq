@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 import pipeline
+import media
 from pipeline import SESSIONS
 
 
@@ -39,7 +40,7 @@ def test_build_highlights_picks_top_n_by_hits_and_concats():
         for i in range(6):
             _make_clip(clips / f"rally_{i:02d}.mp4")
 
-        out = pipeline.build_highlights(sdir)
+        out = media.build_highlights(sdir)
         assert out is not None and out.exists()
         # 5 clips at 0.5s each concatenated -> ~2.5s (allow encode slop)
         dur = _probe_duration(out)
@@ -53,7 +54,7 @@ def test_build_highlights_none_without_events():
     sdir = SESSIONS / "hl_test_no_events"
     try:
         sdir.mkdir(parents=True)
-        assert pipeline.build_highlights(sdir) is None
+        assert media.build_highlights(sdir) is None
     finally:
         import shutil
         shutil.rmtree(sdir, ignore_errors=True)
@@ -66,7 +67,7 @@ def test_build_highlights_none_without_clip_files():
         (sdir / "events.json").write_text(json.dumps(
             {"rallies": [{"start": 0, "end": 1, "hits": 5, "duration": 1}]}))
         # rally listed but clip file never written
-        assert pipeline.build_highlights(sdir) is None
+        assert media.build_highlights(sdir) is None
     finally:
         import shutil
         shutil.rmtree(sdir, ignore_errors=True)

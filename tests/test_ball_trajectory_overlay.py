@@ -8,7 +8,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-import pipeline
+import stages
 from court import CourtCalibration
 
 FPS = 30.0
@@ -28,7 +28,7 @@ def test_shots_stage_persists_pixel_bounces(tmp_path):
     calib = CourtCalibration(CORNERS)
     ball = _bouncy_ball()
     pos = pd.DataFrame({"t": [0.0, 0.3], "x": [10.0, 10.0], "y": [16.0, 16.0]})
-    bounces_court = pipeline.shots_stage(
+    bounces_court = stages.shots_stage(
         tmp_path, calib, pos, np.array([]), np.array([]), [], CORNERS,
         ball, {"coverage": 0.0, "segments": 1, "frames": 11, "stride": 1})
     assert len(bounces_court) >= 1  # sanity: a bounce really was detected
@@ -45,7 +45,7 @@ def test_shots_stage_persists_pixel_bounces(tmp_path):
 def test_shots_stage_empty_bounces_when_no_ball_track(tmp_path):
     calib = CourtCalibration(CORNERS)
     pos = pd.DataFrame({"t": [0.0], "x": [10.0], "y": [16.0]})
-    pipeline.shots_stage(tmp_path, calib, pos, np.array([]), np.array([]), [], CORNERS,
+    stages.shots_stage(tmp_path, calib, pos, np.array([]), np.array([]), [], CORNERS,
                          pd.DataFrame(columns=["frame", "x", "y", "seg"]),
                          {"coverage": 0.0, "segments": 0, "frames": 0, "stride": 1})
     import json

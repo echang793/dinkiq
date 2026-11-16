@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fastapi.testclient import TestClient
 
 import server
+import jobs
 from pipeline import SESSIONS
 
 client = TestClient(server.app)
@@ -247,8 +248,7 @@ def test_subject_marker_doubles_returns_partner_and_two_opponents():
 
 
 def test_calibrate_writes_last_calibration_corners_only(monkeypatch):
-    import pipeline
-    monkeypatch.setattr(pipeline, "enqueue_analyze", lambda sdir: None)
+    monkeypatch.setattr(jobs, "enqueue_analyze", lambda sdir: None)
     d = _mk("testcal_last")
     (d / "status.json").write_text(json.dumps({"stage": "ingest", "state": "done"}))
     try:

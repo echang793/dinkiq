@@ -23,6 +23,9 @@ import httpx2 as httpx  # starlette 1.x test client is built on httpx2
 from fastapi.testclient import TestClient
 
 import pipeline
+import media
+import jobs
+import session_status
 import server
 
 client = TestClient(server.app)
@@ -55,8 +58,8 @@ def _status(d):
 @pytest.fixture
 def spy(monkeypatch):
     calls = {"analyze": [], "ingest": []}
-    monkeypatch.setattr(pipeline, "enqueue_analyze", lambda d: calls["analyze"].append(d.name))
-    monkeypatch.setattr(pipeline, "_spawn_ingest", lambda d, raw: calls["ingest"].append((d.name, raw.name)))
+    monkeypatch.setattr(jobs, "enqueue_analyze", lambda d: calls["analyze"].append(d.name))
+    monkeypatch.setattr(jobs, "_spawn_ingest", lambda d, raw: calls["ingest"].append((d.name, raw.name)))
     return calls
 
 
@@ -64,7 +67,7 @@ def test_interrupted_analysis_with_calibration_is_requeued(spy):
     _mk("q1", {"stage": "queued", "state": "queued"}, calibrated=True)
     _mk("t1", {"stage": "tracking", "state": "running", "progress": 0.4}, calibrated=True)
     _mk("r1", {"stage": "rating", "state": "running"}, calibrated=True)
-    out = pipeline.recover_interrupted()
+    out = jobs.recover_interrupted()
     assert sorted(spy["analyze"]) == ["q1", "r1", "t1"]
     assert sorted(out["requeued"]) == ["q1", "r1", "t1"]
 
@@ -73,28 +76,28 @@ def test_requeue_preserves_fifo_order_oldest_first(spy):
     _mk("newer", {"stage": "queued", "state": "queued"}, calibrated=True, age_s=10)
     _mk("oldest", {"stage": "queued", "state": "queued"}, calibrated=True, age_s=500)
     _mk("middle", {"stage": "tracking", "state": "running"}, calibrated=True, age_s=100)
-    pipeline.recover_interrupted()
+    jobs.recover_interrupted()
     assert spy["analyze"] == ["oldest", "middle", "newer"]
 
 
 def test_interrupted_analysis_without_calibration_becomes_a_recoverable_error(spy):
     d = _mk("nocal", {"stage": "tracking", "state": "running"})
-    out = pipeline.recover_interrupted()
+    out = jobs.recover_interrupted()
     assert spy["analyze"] == [] and out["failed"] == ["nocal"]
     st = _status(d)
     assert st["state"] == "error" and "restart" in st["error"].lower()
-    assert server._calibratable(pipeline.get_status(d))  # the user can now recalibrate
+    assert server._calibratable(session_status.get_status(d))  # the user can now recalibrate
 
 
 def test_interrupted_ingest_is_restarted_from_the_kept_raw_file(spy):
     _mk("ing1", {"stage": "ingest", "state": "running"}, raw="raw.mov")
-    out = pipeline.recover_interrupted()
+    out = jobs.recover_interrupted()
     assert spy["ingest"] == [("ing1", "raw.mov")] and out["reingested"] == ["ing1"]
 
 
 def test_interrupted_ingest_without_raw_becomes_an_error(spy):
     d = _mk("ing2", {"stage": "ingest", "state": "running"})
-    out = pipeline.recover_interrupted()
+    out = jobs.recover_interrupted()
     assert spy["ingest"] == [] and out["failed"] == ["ing2"]
     assert "re-upload" in _status(d)["error"].lower()
 
@@ -108,7 +111,7 @@ def test_settled_sessions_and_trash_are_left_alone(spy):
     (pipeline.SESSIONS / ".trash" / "gone1").mkdir(parents=True)
     (pipeline.SESSIONS / ".trash" / "gone1" / "status.json").write_text(
         json.dumps({"stage": "tracking", "state": "running"}))
-    out = pipeline.recover_interrupted()
+    out = jobs.recover_interrupted()
     assert spy == {"analyze": [], "ingest": []}
     assert not any(out.values())
 
@@ -116,14 +119,14 @@ def test_settled_sessions_and_trash_are_left_alone(spy):
 def test_unreadable_status_is_not_touched_by_recovery(spy):
     d = _mk("corrupt")
     (d / "status.json").write_text('{"stage": "trac')
-    pipeline.recover_interrupted()
+    jobs.recover_interrupted()
     assert spy == {"analyze": [], "ingest": []}
     assert (d / "status.json").read_text() == '{"stage": "trac'
 
 
 def test_recovery_runs_on_server_startup(monkeypatch):
     seen = []
-    monkeypatch.setattr(pipeline, "recover_interrupted", lambda: seen.append(1) or {})
+    monkeypatch.setattr(jobs, "recover_interrupted", lambda: seen.append(1) or {})
     with TestClient(server.app):
         pass
     assert seen == [1]
@@ -132,7 +135,7 @@ def test_recovery_runs_on_server_startup(monkeypatch):
 def test_a_recovery_failure_does_not_stop_the_server_starting(monkeypatch):
     def boom():
         raise RuntimeError("disk on fire")
-    monkeypatch.setattr(pipeline, "recover_interrupted", boom)
+    monkeypatch.setattr(jobs, "recover_interrupted", boom)
     with TestClient(server.app) as c:
         assert c.get("/api/sessions").status_code == 200
 
@@ -160,8 +163,8 @@ def test_bulk_delete_skips_only_the_busy_session():
 # (chunked path: init{session_id} -> PUT chunks -> finish{session_id})
 
 def _arm_reupload(monkeypatch, readable=True):
-    monkeypatch.setattr(pipeline, "ingest", lambda sdir, raw: None)
-    monkeypatch.setattr(pipeline, "probe_video", lambda p: (
+    monkeypatch.setattr(media, "ingest", lambda sdir, raw: None)
+    monkeypatch.setattr(media, "probe_video", lambda p: (
         {"codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 300, "duration": 10.0}
         if readable else {"codec": None, "width": 0, "height": 0, "fps": 0.0, "frames": 0, "duration": 0.0}))
     monkeypatch.setattr(server.threading, "Thread",

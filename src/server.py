@@ -25,10 +25,14 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 from pydantic import BaseModel, Field, field_validator
 
+import jobs
 import logsetup
+import media
 import pipeline
+import session_status
 from jsonio import atomic_write_json, load_json, sanitize
-from pipeline import SESSIONS, get_status, session_dir
+from pipeline import SESSIONS, session_dir
+from session_status import get_status
 from tracking import MODEL_NAME as POSE_MODEL
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -94,7 +98,7 @@ def _sweep_raw() -> None:
         # leave a partial video.mp4, so look at the status, not just the file.
         status = get_status(d)
         ingest_unfinished = status.get("stage") == "ingest" and status.get("state") != "done"
-        if pipeline.is_busy(d) or ingest_unfinished or not (d / "video.mp4").exists():
+        if jobs.is_busy(d) or ingest_unfinished or not (d / "video.mp4").exists():
             continue
         for raw in d.glob("raw.*"):
             try:
@@ -131,7 +135,7 @@ async def _lifespan(app: FastAPI):
     # The job queue is in memory only: repair whatever a restart/crash stranded
     # before serving. Must never stop the server from coming up.
     try:
-        recovered = pipeline.recover_interrupted()
+        recovered = jobs.recover_interrupted()
         if any(recovered.values()):
             log.warning("startup recovery: %s", recovered)
     except Exception:
@@ -360,7 +364,7 @@ def health():
     watchdog can alert on the status code alone. The old failure mode was a server
     that answered requests perfectly while every analysis died on a missing tool."""
     free = _free_bytes()
-    worker = pipeline.worker_status()
+    worker = jobs.worker_status()
     writable = _data_dir_writable()
     weights = _weights_present()
     checks = {
@@ -556,7 +560,7 @@ def upload_finish(upload_id: str, req: UploadFinish):
     shutil.move(str(part), str(raw))
     try:
         result = _start_session(sdir, raw, req.filename, req.match_type)
-    except pipeline.ToolMissing as e:
+    except media.ToolMissing as e:
         # don't leave a session with no meta/status behind; keep the upload so
         # the user can simply retry once the PATH problem is fixed
         shutil.move(str(raw), str(part))
@@ -592,7 +596,7 @@ def capture_hint(info: dict) -> str | None:
 def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dict:
     """Write meta, kick off ingest — shared by both upload paths."""
     meta = {"filename": filename, "match_type": match_type}
-    info = pipeline.probe_video(raw)
+    info = media.probe_video(raw)
     dur = info.get("duration", 0.0)
     if dur > WARN_DURATION_S:
         meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
@@ -601,13 +605,13 @@ def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dic
     if hint:
         meta["capture_hint"] = hint
     atomic_write_json(sdir / "meta.json", meta)
-    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
+    threading.Thread(target=media.ingest, args=(sdir, raw), daemon=True).start()
     return {"session_id": sdir.name, "duration_s": dur,
             "warning": meta.get("warning"), "capture_hint": hint}
 
 
 def _refuse_if_busy(sdir: Path) -> None:
-    if pipeline.is_busy(sdir):
+    if jobs.is_busy(sdir):
         raise HTTPException(409, "session is still processing")
 
 
@@ -617,8 +621,8 @@ def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
     untouched until that check passes (this used to delete them first, so a bad
     replacement left a session with nothing)."""
     try:
-        info = pipeline.probe_video(incoming)
-    except pipeline.ToolMissing as e:
+        info = media.probe_video(incoming)
+    except media.ToolMissing as e:
         incoming.unlink(missing_ok=True)  # the original is untouched
         raise HTTPException(503, str(e))
     if not info.get("codec") or info.get("duration", 0) <= 0:
@@ -645,8 +649,8 @@ def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
     if hint:
         meta["capture_hint"] = hint
     atomic_write_json(sdir / "meta.json", meta)
-    pipeline.set_status(sdir, "ingest", "running")  # not the previous run's "done"
-    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
+    session_status.set_status(sdir, "ingest", "running")  # not the previous run's "done"
+    threading.Thread(target=media.ingest, args=(sdir, raw), daemon=True).start()
     return {"session_id": sdir.name, "duration_s": dur,
             "warning": meta.get("warning"), "capture_hint": hint}
 
@@ -696,7 +700,7 @@ def sessions(label: str | None = None, opponent: str | None = None,
                 **status,
             }
             if status.get("stage") == "queued":
-                row["queue_position"] = pipeline.queue_position(d)
+                row["queue_position"] = jobs.queue_position(d)
             if status.get("stage") == "done":
                 # summary fields the sessions list/table renders directly —
                 # real numbers, not a UI placeholder, for every completed row
@@ -867,7 +871,7 @@ def delete_sessions(req: BulkDelete):
         if not d.exists():
             errors.append({"id": sid, "error": "not found"})
             continue
-        if pipeline.is_busy(d):  # moving the folder out from under a running job breaks it
+        if jobs.is_busy(d):  # moving the folder out from under a running job breaks it
             errors.append({"id": sid, "error": "session is still processing"})
             continue
         meta_f = d / "meta.json"
@@ -1224,7 +1228,7 @@ def session(sid: str):
     sdir = _sdir(sid)
     resp = {"session_id": sid, **get_status(sdir)}
     if resp.get("stage") == "queued":
-        resp["queue_position"] = pipeline.queue_position(sdir)
+        resp["queue_position"] = jobs.queue_position(sdir)
     meta_f = sdir / "meta.json"
     resp["meta"] = load_json(meta_f)
     for key, fname in (("metrics", "metrics.json"), ("events", "events.json"),
@@ -1274,7 +1278,7 @@ def highlights(sid: str):
         raise HTTPException(409, "session not ready for a highlight reel")
     out = sdir / "highlights.mp4"
     if not out.exists():
-        if pipeline.build_highlights(sdir) is None:
+        if media.build_highlights(sdir) is None:
             raise HTTPException(404, "no rally clips available for a highlight reel")
     return FileResponse(out, media_type="video/mp4",
                         filename=f"dinkiq_highlights_{sid}.mp4")
@@ -1383,14 +1387,14 @@ def calibrate(sid: str, cal: Calibration):
     frame_f = sdir / "frame0.jpg"
     frame_size = None
     if frame_f.exists():
-        info = pipeline.probe_video(frame_f)  # ffprobe reads a still frame fine too
+        info = media.probe_video(frame_f)  # ffprobe reads a still frame fine too
         if info.get("width") and info.get("height"):
             frame_size = [info["width"], info["height"]]
     atomic_write_json(LAST_CALIBRATION_PATH, {
         "corners_px": cal.corners_px, "kitchen_px": cal.kitchen_px,
         "frame_size": frame_size,
     })
-    pipeline.enqueue_analyze(sdir)
+    jobs.enqueue_analyze(sdir)
     return {"ok": True}
 
 
@@ -1413,7 +1417,7 @@ def reprocess(sid: str):
     if get_status(sdir).get("state") not in ("done", "error"):
         raise HTTPException(409, "session is still processing")
     pipeline.clear_derived(sdir)
-    pipeline.enqueue_analyze(sdir)
+    jobs.enqueue_analyze(sdir)
     return {"ok": True}
 
 
