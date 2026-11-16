@@ -4,7 +4,7 @@
     {
       "name": "dinkiq",
       "runtimeExecutable": "bash",
-      "runtimeArgs": ["-c", "cd /Users/erichang/Desktop/dinkiq/src && exec ../.venv/bin/python server.py"],
+      "runtimeArgs": ["-c", "cd /Users/erichang/dev/dinkiq/src && exec ../.venv/bin/python server.py"],
       "port": 8100
     }
   ]
