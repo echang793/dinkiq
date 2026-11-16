@@ -14,12 +14,12 @@ resumable:
 """
 
 import json
+import logging
 import os
 import queue
 import re
 import subprocess
 import threading
-import traceback
 from pathlib import Path
 
 import numpy as np
@@ -35,6 +35,8 @@ from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
 from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject,
                       run_tracking, stitch_chain_ids, stitch_subject,
                       subject_court_positions)
+
+log = logging.getLogger("dinkiq.pipeline")
 
 ROOT = Path(__file__).resolve().parent.parent
 # DINKIQ_DATA_DIR relocates all mutable state (sessions, uploads, trash, saved
@@ -100,8 +102,21 @@ def get_status(sdir: Path) -> dict:
                     "error": "status.json is unreadable — recalibrate or re-analyze to recover"})
 
 
+class ToolMissing(RuntimeError):
+    """ffmpeg/ffprobe isn't on PATH. launchd hands services a minimal PATH with
+    no Homebrew, which once left the server serving happily while every analysis
+    died with a raw "[Errno 2] ... 'ffprobe'"; say what is actually wrong."""
+
+
+def _tool_missing(name: str) -> ToolMissing:
+    return ToolMissing(f"{name} not found — is ffmpeg installed and on the service's PATH?")
+
+
 def _run(cmd: list[str]) -> None:
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise _tool_missing(cmd[0]) from e
     if proc.returncode != 0:
         raise RuntimeError(f"{cmd[0]} failed: {proc.stderr[-800:]}")
 
@@ -159,19 +174,24 @@ def build_highlights(sdir: Path) -> Path | None:
 # ---- single-worker analysis queue: one YOLO/MPS job at a time ----
 _jobs: queue.Queue = queue.Queue()
 _worker_started = False
+_worker_thread: threading.Thread | None = None
+_current: Path | None = None  # session the worker is analysing right now
 _worker_lock = threading.Lock()
 _queue_order: list[Path] = []  # FIFO of pending/running session dirs, for position lookup
 _queue_lock = threading.Lock()
 
 
 def _worker() -> None:
+    global _current
     while True:
         sdir = _jobs.get()
+        _current = sdir
         try:
             analyze(sdir)
         except Exception:
-            traceback.print_exc()
+            log.exception("analysis worker: unhandled error for %s", sdir.name)
         finally:
+            _current = None
             with _queue_lock:
                 if sdir in _queue_order:
                     _queue_order.remove(sdir)
@@ -179,15 +199,27 @@ def _worker() -> None:
 
 
 def enqueue_analyze(sdir: Path) -> None:
-    global _worker_started
+    global _worker_started, _worker_thread
     with _worker_lock:
         if not _worker_started:
-            threading.Thread(target=_worker, daemon=True).start()
+            _worker_thread = threading.Thread(target=_worker, daemon=True)
+            _worker_thread.start()
             _worker_started = True
     set_status(sdir, "queued", "queued")
     with _queue_lock:
         _queue_order.append(sdir)
     _jobs.put(sdir)
+
+
+def worker_status() -> dict:
+    """For /api/health. alive is None until the first job starts the worker
+    (it is started lazily), False if it has died."""
+    t = _worker_thread
+    cur = _current
+    with _queue_lock:
+        queued = len(_queue_order) - (1 if cur is not None else 0)
+    return {"started": t is not None, "alive": t.is_alive() if t is not None else None,
+            "queued": max(0, queued), "running": cur.name if cur is not None else None}
 
 
 def queue_position(sdir: Path) -> int | None:
@@ -266,19 +298,25 @@ def recover_interrupted() -> dict:
 
 
 def _has_audio(raw: Path) -> bool:
-    proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a",
-         "-show_entries", "stream=index", "-of", "csv=p=0", str(raw)],
-        capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=index", "-of", "csv=p=0", str(raw)],
+            capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise _tool_missing("ffprobe") from e
     return bool(proc.stdout.strip())
 
 
 def probe_video(path: Path) -> dict:
-    proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration",
-         "-of", "json", str(path)],
-        capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+             "stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration",
+             "-of", "json", str(path)],
+            capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise _tool_missing("ffprobe") from e
     info = json.loads(proc.stdout or "{}")
     st = (info.get("streams") or [{}])[0]
     num, _, den = (st.get("r_frame_rate") or "0/1").partition("/")
@@ -305,7 +343,8 @@ def _friendly_error(raw_error: str) -> str:
     return raw_error
 
 
-def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
+def notify_message(sdir: Path, ok: bool, error: str | None = None,
+                   what: str = "analyze") -> str:
     """Human-readable analysis-finished message.
 
     Analysis runs for many minutes, so the useful notification is one you
@@ -316,7 +355,7 @@ def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
     meta = load_json(sdir / "meta.json")
     label = meta.get("label") or meta.get("filename") or sdir.name
     if not ok:
-        return f"⚠️ DinkIQ: {label} failed to analyze — {error or 'unknown error'}"
+        return f"⚠️ DinkIQ: {label} failed to {what} — {error or 'unknown error'}"
 
     parts = [f"✅ DinkIQ: {label} finished analyzing."]
     dupr = load_json(sdir / "dupr.json")
@@ -331,7 +370,8 @@ def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
     return "\n".join(parts)
 
 
-def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
+def notify_webhook(sdir: Path, ok: bool, error: str | None = None,
+                   what: str = "analyze") -> None:
     """Push an analysis-finished notification to DINKIQ_WEBHOOK_URL.
 
     No-op if unset. Never raises — a notification failure must never break
@@ -345,7 +385,7 @@ def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
     url = os.environ.get("DINKIQ_WEBHOOK_URL", "").strip()
     if not url:
         return
-    msg = notify_message(sdir, ok, error)[:2000]
+    msg = notify_message(sdir, ok, error, what)[:2000]
     try:
         import requests
         if "ntfy" in url:
@@ -354,7 +394,7 @@ def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
         else:
             requests.post(url, json={"content": msg}, timeout=10)
     except Exception as e:
-        print(f"  [webhook] notify failed (non-fatal): {e}")
+        log.warning("webhook notify failed (non-fatal): %s", e)
 
 
 def ingest(sdir: Path, raw: Path) -> None:
@@ -368,8 +408,9 @@ def ingest(sdir: Path, raw: Path) -> None:
         video = sdir / "video.mp4"
         src = probe_video(raw)
         if not src["codec"] or src["width"] == 0 or src["height"] == 0 or src["duration"] <= 0:
-            set_status(sdir, "ingest", "error",
-                      "video file is unreadable or corrupted — try re-exporting and re-uploading")
+            msg = "video file is unreadable or corrupted — try re-exporting and re-uploading"
+            set_status(sdir, "ingest", "error", msg)
+            notify_webhook(sdir, ok=False, error=msg, what="prepare the video")
             return
         if (src["codec"] == "h264" and src["height"] <= 720
                 and 29.0 <= src["fps"] <= 31.0):
@@ -386,8 +427,10 @@ def ingest(sdir: Path, raw: Path) -> None:
         atomic_write_json(sdir / "ingest.json", probe_video(video))
         set_status(sdir, "ingest", "done")
     except Exception as e:
-        traceback.print_exc()
-        set_status(sdir, "ingest", "error", _friendly_error(str(e)))
+        log.exception("ingest failed for %s", sdir.name)
+        msg = _friendly_error(str(e))
+        set_status(sdir, "ingest", "error", msg)
+        notify_webhook(sdir, ok=False, error=msg, what="prepare the video")
 
 
 def _player_swings(tracks: pd.DataFrame, track_id: int | None, court_width_px: float) -> np.ndarray:
@@ -689,6 +732,6 @@ def analyze(sdir: Path) -> None:
         set_status(sdir, "done", "done")
         notify_webhook(sdir, ok=True)
     except Exception as e:
-        traceback.print_exc()
+        log.exception("analysis failed for %s", sdir.name)
         set_status(sdir, get_status(sdir).get("stage", "analyze"), "error", str(e))
         notify_webhook(sdir, ok=False, error=str(e))

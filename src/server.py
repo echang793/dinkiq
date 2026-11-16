@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import shutil
+import tempfile
 import threading
 import time
 import uuid
@@ -24,9 +25,11 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 from pydantic import BaseModel, Field, field_validator
 
+import logsetup
 import pipeline
 from jsonio import atomic_write_json, load_json, sanitize
 from pipeline import SESSIONS, get_status, session_dir
+from tracking import MODEL_NAME as POSE_MODEL
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = ROOT / "static"
@@ -285,6 +288,53 @@ def backyard(request: Request):
     return FileResponse(STATIC / "backyard.html")
 
 
+STARTED_AT = time.time()
+
+
+def _weights_present() -> bool:
+    return (pipeline.MODELS / POSE_MODEL).exists()
+
+
+def _data_dir_writable() -> bool:
+    try:
+        SESSIONS.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=SESSIONS.parent):
+            return True
+    except OSError:
+        return False
+
+
+def _tool_check(name: str) -> dict:
+    found = shutil.which(name)
+    return {"ok": bool(found),
+            "detail": found or f"{name} not found on PATH — analysis would fail (launchd's PATH excludes Homebrew)"}
+
+
+@app.get("/api/health")
+def health():
+    """Is this server able to do its job? 200 only when every check passes, so a
+    watchdog can alert on the status code alone. The old failure mode was a server
+    that answered requests perfectly while every analysis died on a missing tool."""
+    free = _free_bytes()
+    worker = pipeline.worker_status()
+    writable = _data_dir_writable()
+    weights = _weights_present()
+    checks = {
+        "ffmpeg": _tool_check("ffmpeg"),
+        "ffprobe": _tool_check("ffprobe"),
+        "disk": {"ok": free >= MIN_FREE_BYTES, "detail": f"{free / (1 << 30):.1f} GB free"},
+        "data_dir": {"ok": writable, "detail": "writable" if writable else "not writable"},
+        "weights": {"ok": weights, "detail": f"{POSE_MODEL} {'present' if weights else 'MISSING'}"},
+        "worker": {"ok": worker["alive"] is not False,
+                   "detail": "not started yet" if not worker["started"] else
+                   ("running" if worker["alive"] else "DEAD — restart the service")},
+    }
+    ok = all(c["ok"] for c in checks.values())
+    return SafeJSONResponse(status_code=200 if ok else 503, content={
+        "ok": ok, "checks": checks, "uptime_s": round(time.time() - STARTED_AT),
+        "queue": {"queued": worker["queued"], "running": worker["running"]}})
+
+
 MAX_UPLOAD_BYTES = 2 << 30  # 2 GB
 WARN_DURATION_S = 30 * 60
 
@@ -457,8 +507,16 @@ def upload_finish(upload_id: str, req: UploadFinish):
     sdir.mkdir(parents=True)
     raw = sdir / f"raw{ext}"
     shutil.move(str(part), str(raw))
+    try:
+        result = _start_session(sdir, raw, req.filename, req.match_type)
+    except pipeline.ToolMissing as e:
+        # don't leave a session with no meta/status behind; keep the upload so
+        # the user can simply retry once the PATH problem is fixed
+        shutil.move(str(raw), str(part))
+        shutil.rmtree(sdir, ignore_errors=True)
+        raise HTTPException(503, str(e))
     _upload_locks.pop(upload_id, None)
-    return _start_session(sdir, raw, req.filename, req.match_type)
+    return result
 
 
 # Analysis runs at 720p30 no matter what comes in, so anything larger is
@@ -511,7 +569,11 @@ def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
     known to be a readable video. The original raw file and all analysis are
     untouched until that check passes (this used to delete them first, so a bad
     replacement left a session with nothing)."""
-    info = pipeline.probe_video(incoming)
+    try:
+        info = pipeline.probe_video(incoming)
+    except pipeline.ToolMissing as e:
+        incoming.unlink(missing_ok=True)  # the original is untouched
+        raise HTTPException(503, str(e))
     if not info.get("codec") or info.get("duration", 0) <= 0:
         incoming.unlink(missing_ok=True)
         raise HTTPException(400, "the replacement isn't a readable video — the original was kept")
@@ -1311,4 +1373,6 @@ if __name__ == "__main__":
     if _DINKIQ_PASSWORD_BYTES and not _PROXY_SECRET_BYTES:
         print("warning: DINKIQ_PASSWORD is set but DINKIQ_PROXY_SECRET is not -- "
               "requests through the reverse proxy will be asked for the password again")
-    uvicorn.run(app, host=HOST, port=8100)
+    logsetup.configure_logging()
+    uvicorn.run(app, host=HOST, port=8100,
+                log_config=logsetup.uvicorn_log_config() or uvicorn.config.LOGGING_CONFIG)
