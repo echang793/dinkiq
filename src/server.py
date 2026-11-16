@@ -2,6 +2,7 @@
 
 import base64
 import json
+import math
 import os
 import re
 import secrets
@@ -12,11 +13,14 @@ from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, Request, UploadFile
-from fastapi.responses import (FileResponse, HTMLResponse, PlainTextResponse,
-                               Response)
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
+                               PlainTextResponse, Response)
 from pydantic import BaseModel, Field, field_validator
 
 import pipeline
+from jsonio import atomic_write_json, load_json, sanitize
 from pipeline import SESSIONS, get_status, session_dir
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,7 +45,25 @@ def _load_dotenv(path: Path) -> None:
 
 _load_dotenv(ROOT / ".env")
 
-app = FastAPI(title="DinkIQ")
+class SafeJSONResponse(JSONResponse):
+    """Starlette's default refuses NaN/Inf (-> a 500 for the whole endpoint) and
+    other JSON writers emit bare `NaN`, which iOS Safari hard-fails on. Map them
+    to null once, here, for every response."""
+
+    def render(self, content) -> bytes:
+        return json.dumps(sanitize(content), ensure_ascii=False, allow_nan=False,
+                          indent=None, separators=(",", ":")).encode("utf-8")
+
+
+app = FastAPI(title="DinkIQ", default_response_class=SafeJSONResponse)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    # FastAPI's built-in handler uses the plain JSONResponse, and the error body
+    # echoes the offending `input` -- so a NaN in a request turned a clean 422
+    # into a 500. Same body shape, routed through the NaN-safe response.
+    return SafeJSONResponse(status_code=422, content={"detail": jsonable_encoder(exc.errors())})
 
 # ── Optional HTTP Basic Auth for remote access (e.g. via Tailscale Funnel) ──
 # Set DINKIQ_PASSWORD=somepassword (in .env, or the environment directly).
@@ -110,11 +132,35 @@ async def _basic_auth(request, call_next):
                              headers={"WWW-Authenticate": 'Basic realm="DinkIQ"'})
 
 
+COORD_LIMIT_PX = 20_000.0  # frames are ~1280x720 and the UI pads 25%; this only stops garbage
+
+
+def _check_point(pt: list[float]) -> None:
+    if len(pt) != 2 or not all(math.isfinite(v) and abs(v) <= COORD_LIMIT_PX for v in pt):
+        raise ValueError("each point must be [x, y], finite, and within a sane pixel range")
+
+
 class Calibration(BaseModel):
     corners_px: list[list[float]] = Field(min_length=4, max_length=4)
     kitchen_px: list[list[float]] | None = Field(default=None, min_length=4, max_length=4)
     self_px: list[float] = Field(min_length=2, max_length=2)
     partner_px: list[float] | None = Field(default=None, min_length=2, max_length=2)
+
+    # NaN/Infinity pass plain `float`, then poison the homography and every
+    # JSON file derived from it (and last_calibration.json, which persists)
+    @field_validator("corners_px", "kitchen_px")
+    @classmethod
+    def _valid_points(cls, v):
+        for pt in v or []:
+            _check_point(pt)
+        return v
+
+    @field_validator("self_px", "partner_px")
+    @classmethod
+    def _valid_point(cls, v):
+        if v is not None:
+            _check_point(v)
+        return v
 
 
 class BulkDelete(BaseModel):
@@ -352,7 +398,7 @@ def _start_session(sdir: Path, raw: Path, filename: str, match_type: str) -> dic
     hint = capture_hint(info)
     if hint:
         meta["capture_hint"] = hint
-    (sdir / "meta.json").write_text(json.dumps(meta))
+    atomic_write_json(sdir / "meta.json", meta)
     threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
     return {"session_id": sdir.name, "duration_s": dur,
             "warning": meta.get("warning"), "capture_hint": hint}
@@ -388,14 +434,14 @@ async def reupload(sid: str, file: UploadFile):
                 "ball.parquet", "ingest.json"):
         (sdir / name).unlink(missing_ok=True)
     meta_f = sdir / "meta.json"
-    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    meta = load_json(meta_f)
     meta["filename"] = file.filename
     meta.pop("warning", None)
     dur = pipeline.probe_video(raw).get("duration", 0.0)
     if dur > WARN_DURATION_S:
         meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
                            "while; consider splitting into games")
-    meta_f.write_text(json.dumps(meta))
+    atomic_write_json(meta_f, meta)
     threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
     return {"session_id": sid, "duration_s": dur, "warning": meta.get("warning")}
 
@@ -417,7 +463,7 @@ def sessions(label: str | None = None, opponent: str | None = None,
             if not d.is_dir() or d == TRASH:
                 continue
             meta_f = d / "meta.json"
-            meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+            meta = load_json(meta_f)
             if label and label.lower() not in (meta.get("label") or "").lower():
                 continue
             if opponent and opponent.lower() not in (meta.get("opponent") or "").lower():
@@ -501,12 +547,12 @@ def progress():
                 continue
             m_f, e_f, dp_f, meta_f = (d / "metrics.json", d / "events.json",
                                       d / "dupr.json", d / "meta.json")
-            if not m_f.exists():
+            m = load_json(m_f)
+            if not m:  # missing or unreadable: nothing to chart for this session
                 continue
-            m = json.loads(m_f.read_text())
-            ev = json.loads(e_f.read_text()) if e_f.exists() else {}
-            dp = json.loads(dp_f.read_text()) if dp_f.exists() else {}
-            meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+            ev = load_json(e_f)
+            dp = load_json(dp_f)
+            meta = load_json(meta_f)
             date = meta.get("played_at") or datetime.date.fromtimestamp(
                 d.stat().st_mtime).isoformat()
             drills = dp.get("drills") or []
@@ -515,8 +561,8 @@ def progress():
                 "session_id": d.name,
                 "label": meta.get("label") or meta.get("filename"),
                 "date": date,
-                "kitchen_pct": m["zone_pct"].get("kitchen"),
-                "transition_pct": m["zone_pct"].get("transition"),
+                "kitchen_pct": m.get("zone_pct", {}).get("kitchen"),
+                "transition_pct": m.get("zone_pct", {}).get("transition"),
                 "distance_ft": m.get("distance_ft"),
                 "avg_rally_hits": ev.get("avg_rally_hits"),
                 "dupr_band": dp.get("band"),
@@ -536,10 +582,10 @@ def progress():
 def patch_meta(sid: str, patch: MetaPatch):
     sdir = _sdir(sid)
     meta_f = sdir / "meta.json"
-    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    meta = load_json(meta_f)
     for k, v in patch.model_dump(exclude_none=True).items():
         meta[k] = v
-    meta_f.write_text(json.dumps(meta))
+    atomic_write_json(meta_f, meta)
     return meta
 
 
@@ -570,7 +616,7 @@ def correct_point(sid: str, idx: int, patch: PointCorrection):
 
     sdir = _sdir(sid)
     pf = sdir / "points.json"
-    data = json.loads(pf.read_text()) if pf.exists() else {}
+    data = load_json(pf)
     outcomes = data.get("outcomes", [])
     if idx < 0 or idx >= len(outcomes):
         raise HTTPException(404, "rally index out of range")
@@ -591,7 +637,7 @@ def correct_point(sid: str, idx: int, patch: PointCorrection):
     summary["shot_type_outcomes"] = shot_type_outcomes(
         shots_report.get("shots") or [], rallies, outcomes)
     new_data = {"outcomes": outcomes, **summary}
-    pf.write_text(json.dumps(new_data))
+    atomic_write_json(pf, new_data)
     return new_data
 
 
@@ -613,9 +659,9 @@ def delete_sessions(req: BulkDelete):
             errors.append({"id": sid, "error": "not found"})
             continue
         meta_f = d / "meta.json"
-        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        meta = load_json(meta_f)
         meta["deleted_at"] = time.time()
-        meta_f.write_text(json.dumps(meta))
+        atomic_write_json(meta_f, meta)
         TRASH.mkdir(parents=True, exist_ok=True)
         dest = TRASH / sid
         if dest.exists():  # stale leftover from a prior delete of the same id
@@ -636,7 +682,7 @@ def _sweep_trash() -> None:
         if not d.is_dir():
             continue
         meta_f = d / "meta.json"
-        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        meta = load_json(meta_f)
         deleted_at = meta.get("deleted_at", 0)
         if now - deleted_at > TRASH_RETENTION_S:
             shutil.rmtree(d, ignore_errors=True)
@@ -674,9 +720,9 @@ def restore_sessions(req: BulkDelete):
             errors.append({"id": sid, "error": "not found in trash"})
             continue
         meta_f = d / "meta.json"
-        meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+        meta = load_json(meta_f)
         meta.pop("deleted_at", None)
-        meta_f.write_text(json.dumps(meta))
+        atomic_write_json(meta_f, meta)
         dest = SESSIONS / sid
         if dest.exists():  # stale leftover from a prior restore of the same id
             shutil.rmtree(dest)
@@ -696,8 +742,7 @@ def _sdir(sid: str) -> Path:
 
 
 def _load_json(sdir: Path, name: str) -> dict:
-    f = sdir / name
-    return json.loads(f.read_text()) if f.exists() else {}
+    return load_json(sdir / name)
 
 
 def _compare_summary(sdir: Path) -> dict:
@@ -951,7 +996,9 @@ def synergy(sid: str):
     from tracking import subject_court_positions
 
     tracks = pd.read_parquet(tracks_f)
-    calib_data = json.loads(calib_f.read_text())
+    calib_data = load_json(calib_f)
+    if not calib_data.get("corners_px"):
+        return {"available": False, "reason": "calibration data unreadable"}
     calib = CourtCalibration(calib_data["corners_px"], calib_data.get("kitchen_px"))
     partner_pos = subject_court_positions(tracks, m["partner_track_id"], calib, pipeline.FPS)
     pos_f = sdir / "positions.parquet"
@@ -961,6 +1008,9 @@ def synergy(sid: str):
     return report
 
 
+_ABSENT = object()
+
+
 @app.get("/api/session/{sid}")
 def session(sid: str):
     sdir = _sdir(sid)
@@ -968,13 +1018,13 @@ def session(sid: str):
     if resp.get("stage") == "queued":
         resp["queue_position"] = pipeline.queue_position(sdir)
     meta_f = sdir / "meta.json"
-    resp["meta"] = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    resp["meta"] = load_json(meta_f)
     for key, fname in (("metrics", "metrics.json"), ("events", "events.json"),
                        ("shots", "shots.json"), ("points", "points.json"),
                        ("dupr", "dupr.json")):
-        f = sdir / fname
-        if f.exists():
-            resp[key] = json.loads(f.read_text())
+        data = load_json(sdir / fname, default=_ABSENT)
+        if data is not _ABSENT:  # missing or unreadable: omit, same as "stage hasn't run"
+            resp[key] = data
     return resp
 
 
@@ -996,14 +1046,14 @@ def set_clip_note(sid: str, n: int, patch: ClipNote):
     `notes` field — for 'watch what happened at this specific rally'."""
     sdir = _sdir(sid)
     meta_f = sdir / "meta.json"
-    meta = json.loads(meta_f.read_text()) if meta_f.exists() else {}
+    meta = load_json(meta_f)
     notes = meta.get("clip_notes") or {}
     if patch.note.strip():
         notes[str(n)] = patch.note.strip()
     else:
         notes.pop(str(n), None)
     meta["clip_notes"] = notes
-    meta_f.write_text(json.dumps(meta))
+    atomic_write_json(meta_f, meta)
     return {"clip_notes": notes}
 
 
@@ -1119,7 +1169,7 @@ def calibrate(sid: str, cal: Calibration):
     if meta.get("match_type") == "doubles" and cal.partner_px is None:
         raise HTTPException(400, "doubles sessions require partner_px")
     pipeline.clear_derived(sdir)  # keep tracks/ball parquets: pixel-space, reusable
-    (sdir / "calibration.json").write_text(cal.model_dump_json())
+    atomic_write_json(sdir / "calibration.json", cal.model_dump())
     # court corners/kitchen corners are worth reusing for a fixed camera setup —
     # self/partner clicks are NOT saved, those need a fresh click every session
     frame_f = sdir / "frame0.jpg"
@@ -1128,10 +1178,10 @@ def calibrate(sid: str, cal: Calibration):
         info = pipeline.probe_video(frame_f)  # ffprobe reads a still frame fine too
         if info.get("width") and info.get("height"):
             frame_size = [info["width"], info["height"]]
-    LAST_CALIBRATION_PATH.write_text(json.dumps({
+    atomic_write_json(LAST_CALIBRATION_PATH, {
         "corners_px": cal.corners_px, "kitchen_px": cal.kitchen_px,
         "frame_size": frame_size,
-    }))
+    })
     pipeline.enqueue_analyze(sdir)
     return {"ok": True}
 
@@ -1140,7 +1190,9 @@ def calibrate(sid: str, cal: Calibration):
 def last_calibration():
     if not LAST_CALIBRATION_PATH.exists():
         return {"available": False}
-    data = json.loads(LAST_CALIBRATION_PATH.read_text())
+    data = load_json(LAST_CALIBRATION_PATH)
+    if not data.get("corners_px"):  # unreadable/empty file: behave as "never saved"
+        return {"available": False}
     return {"available": True, **data}
 
 

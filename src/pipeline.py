@@ -27,6 +27,7 @@ import pandas as pd
 from court import NET_Y, CourtCalibration, court_px_width
 from events import (corroborate_hits, detect_hits, detect_swings,
                     rally_metrics, segment_rallies, wrist_speed)
+from jsonio import atomic_write_json, load_json
 from metrics import compute_metrics
 from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
                     serve_side_win_rates, shot_type_outcomes)
@@ -77,12 +78,17 @@ def set_status(sdir: Path, stage: str, state: str, error: str | None = None,
         payload["progress"] = round(progress, 3)
     if eta_seconds is not None:
         payload["eta_seconds"] = int(eta_seconds)
-    (sdir / "status.json").write_text(json.dumps(payload))
+    atomic_write_json(sdir / "status.json", payload)
 
 
 def get_status(sdir: Path) -> dict:
-    f = sdir / "status.json"
-    return json.loads(f.read_text()) if f.exists() else {"stage": "new", "state": "idle"}
+    # A truncated status.json (crash mid-write, pre-atomic writes) is reported as
+    # an error rather than raising: state "error" is what unlocks recalibrate /
+    # re-analyze, so the session is recoverable instead of 500ing every list.
+    return load_json(
+        sdir / "status.json", default={"stage": "new", "state": "idle"},
+        on_corrupt={"stage": "error", "state": "error",
+                    "error": "status.json is unreadable — recalibrate or re-analyze to recover"})
 
 
 def _run(cmd: list[str]) -> None:
@@ -120,7 +126,7 @@ def build_highlights(sdir: Path) -> Path | None:
     ev_f = sdir / "events.json"
     if not ev_f.exists():
         return None
-    rallies = json.loads(ev_f.read_text()).get("rallies", [])
+    rallies = load_json(ev_f).get("rallies", [])
     ranked = sorted(range(len(rallies)), key=lambda i: rallies[i]["hits"], reverse=True)
     clips = [sdir / "clips" / f"rally_{i:02d}.mp4" for i in ranked[:HIGHLIGHT_MAX_CLIPS]]
     clips = [c for c in clips if c.exists()]
@@ -232,13 +238,13 @@ def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
     deep link. Separate from notify_webhook so it's testable without a
     network call.
     """
-    meta = _load_json_quiet(sdir / "meta.json")
+    meta = load_json(sdir / "meta.json")
     label = meta.get("label") or meta.get("filename") or sdir.name
     if not ok:
         return f"⚠️ DinkIQ: {label} failed to analyze — {error or 'unknown error'}"
 
     parts = [f"✅ DinkIQ: {label} finished analyzing."]
-    dupr = _load_json_quiet(sdir / "dupr.json")
+    dupr = load_json(sdir / "dupr.json")
     if dupr.get("band") is not None:
         line = f"Plays like ~{dupr['band']} DUPR"
         if dupr.get("confidence") is not None:
@@ -248,13 +254,6 @@ def notify_message(sdir: Path, ok: bool, error: str | None = None) -> str:
     if public:
         parts.append(public)
     return "\n".join(parts)
-
-
-def _load_json_quiet(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text())
-    except Exception:
-        return {}
 
 
 def notify_webhook(sdir: Path, ok: bool, error: str | None = None) -> None:
@@ -309,7 +308,7 @@ def ingest(sdir: Path, raw: Path) -> None:
                   str(sdir / "audio.wav")])
         _run(["ffmpeg", "-y", "-i", str(video), "-vframes", "1", "-q:v", "3",
               str(sdir / "frame0.jpg")])
-        (sdir / "ingest.json").write_text(json.dumps(probe_video(video)))
+        atomic_write_json(sdir / "ingest.json", probe_video(video))
         set_status(sdir, "ingest", "done")
     except Exception as e:
         traceback.print_exc()
@@ -372,7 +371,7 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     ev["opponent_track_ids"] = opponents
     ev["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
     ev["opponent_swing_count"] = int(len(player_swings.get("opponent1", [])))
-    (sdir / "events.json").write_text(json.dumps(ev))
+    atomic_write_json(sdir / "events.json", ev)
 
     clips = sdir / "clips"
     clips.mkdir(exist_ok=True)
@@ -420,7 +419,7 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
                                 .head(BOUNCE_OVERLAY_CAP).round(1).to_dict("records"))
     else:
         report["bounces_px"] = []
-    (sdir / "shots.json").write_text(json.dumps(report))
+    atomic_write_json(sdir / "shots.json", report)
     return bounces_court
 
 
@@ -438,7 +437,7 @@ def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
         shots_report.get("serves") or [], outcomes)
     summary["shot_type_outcomes"] = shot_type_outcomes(
         shots_report.get("shots") or [], rallies, outcomes)
-    (sdir / "points.json").write_text(json.dumps({"outcomes": outcomes, **summary}))
+    atomic_write_json(sdir / "points.json", {"outcomes": outcomes, **summary})
 
 
 def ensure_cuts(sdir: Path, video: Path, stride: int) -> int:
@@ -453,10 +452,12 @@ def ensure_cuts(sdir: Path, video: Path, stride: int) -> int:
     one case with a standalone decode; every other call is a free file read.
     """
     cuts_f = sdir / "cuts.json"
-    if not cuts_f.exists():
+    cuts = load_json(cuts_f)
+    if "cut_frames" not in cuts:  # missing, or corrupt -> regenerate, never a silent 0
         from ball import detect_cuts
-        cuts_f.write_text(json.dumps({"cut_frames": detect_cuts(video, stride=stride)}))
-    return len(json.loads(cuts_f.read_text())["cut_frames"])
+        cuts = {"cut_frames": detect_cuts(video, stride=stride)}
+        atomic_write_json(cuts_f, cuts)
+    return len(cuts["cut_frames"])
 
 
 def analyze(sdir: Path) -> None:
@@ -472,7 +473,9 @@ def analyze(sdir: Path) -> None:
     from tracking import TRACK_STRIDE
 
     try:
-        calib_data = json.loads((sdir / "calibration.json").read_text())
+        calib_data = load_json(sdir / "calibration.json")
+        if not calib_data.get("corners_px") or not calib_data.get("self_px"):
+            raise RuntimeError("calibration.json is missing or unreadable — recalibrate this session")
         calib = CourtCalibration(calib_data["corners_px"], calib_data.get("kitchen_px"))
         info = probe_video(sdir / "video.mp4")
         total_frames = max(1, info["frames"])
@@ -523,11 +526,10 @@ def analyze(sdir: Path) -> None:
                                   progress_cb=_progress, frame_cb=_frame_cb)
             ball, ball_stats = build_ball_track(
                 balldet.candidates, total_frames, ball_pq, stride=TRACK_STRIDE)
-            (sdir / "cuts.json").write_text(json.dumps(
-                {"cut_frames": cutdet.cut_frames}))
+            atomic_write_json(sdir / "cuts.json", {"cut_frames": cutdet.cut_frames})
 
         set_status(sdir, "metrics", "running")
-        meta = json.loads((sdir / "meta.json").read_text()) if (sdir / "meta.json").exists() else {}
+        meta = load_json(sdir / "meta.json")
         match_type = meta.get("match_type", "singles")
         doubles = match_type == "doubles"
 
@@ -571,7 +573,7 @@ def analyze(sdir: Path) -> None:
         m["partner_track_id"] = partner
         m["opponent_track_ids"] = opponents
         m["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
-        (sdir / "metrics.json").write_text(json.dumps(m))
+        atomic_write_json(sdir / "metrics.json", m)
 
         set_status(sdir, "events", "running")
         audio_thread.join(timeout=120)
@@ -588,7 +590,7 @@ def analyze(sdir: Path) -> None:
                                     hitters=hitters, ws=ws_subject)
 
         set_status(sdir, "points", "running")
-        shots_report = json.loads((sdir / "shots.json").read_text())
+        shots_report = load_json(sdir / "shots.json")
         points_stage(sdir, rallies, hit_times, hitters, bounces_court,
                     ball_available=bool(shots_report.get("available")),
                     shots_report=shots_report)
@@ -596,11 +598,11 @@ def analyze(sdir: Path) -> None:
         set_status(sdir, "rating", "running")
         from dupr import estimate
         from feedback import coach_tips, drills_for_weak, fatigue_note
-        m_final = json.loads((sdir / "metrics.json").read_text())
+        m_final = load_json(sdir / "metrics.json")
         rating = estimate(
             m_final,
-            json.loads((sdir / "events.json").read_text()),
-            json.loads((sdir / "shots.json").read_text()),
+            load_json(sdir / "events.json"),
+            load_json(sdir / "shots.json"),
             calibration=calib_data,
         )
         rating["tips"] = coach_tips(rating)
@@ -608,7 +610,7 @@ def analyze(sdir: Path) -> None:
         if note:
             rating["tips"].append(note)
         rating["drills"] = drills_for_weak(rating)
-        (sdir / "dupr.json").write_text(json.dumps(rating))
+        atomic_write_json(sdir / "dupr.json", rating)
         set_status(sdir, "done", "done")
         notify_webhook(sdir, ok=True)
     except Exception as e:
