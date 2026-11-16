@@ -66,11 +66,55 @@ class SafeJSONResponse(JSONResponse):
 log = logging.getLogger("dinkiq")
 
 
+RAW_KEEP_DAYS_DEFAULT = 14
+
+
+def _raw_retention_s() -> float | None:
+    """How long to keep a session's original upload once it has been ingested.
+    DINKIQ_KEEP_RAW_DAYS: N days (default 14), 0 = drop as soon as ingest is done,
+    negative = keep forever. Raw is only ever read DURING ingest; this is about
+    whether you can get your original-quality footage back, hence a grace period."""
+    try:
+        days = float(os.environ.get("DINKIQ_KEEP_RAW_DAYS", RAW_KEEP_DAYS_DEFAULT))
+    except ValueError:
+        days = RAW_KEEP_DAYS_DEFAULT
+    return None if days < 0 else days * 86400
+
+
+def _sweep_raw() -> None:
+    keep = _raw_retention_s()
+    if keep is None or not SESSIONS.exists():
+        return
+    now = time.time()
+    for d in SESSIONS.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        # raw is the ONLY good copy until ingest has produced the normalized video,
+        # and ingest/recovery read it while a job is running. A failed ingest can
+        # leave a partial video.mp4, so look at the status, not just the file.
+        status = get_status(d)
+        ingest_unfinished = status.get("stage") == "ingest" and status.get("state") != "done"
+        if pipeline.is_busy(d) or ingest_unfinished or not (d / "video.mp4").exists():
+            continue
+        for raw in d.glob("raw.*"):
+            try:
+                if now - raw.stat().st_mtime >= keep:
+                    raw.unlink(missing_ok=True)
+                    log.info("retention: removed original upload %s/%s", d.name, raw.name)
+            except OSError:
+                log.exception("retention: could not remove %s", raw)
+
+
+def _dir_bytes(d: Path) -> int:
+    return sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+
+
 def _maintenance_once() -> None:
     """Housekeeping that used to run only when someone happened to start an
     upload or open the trash view: abandoned partials and expired trash."""
     _sweep_uploads()
     _sweep_trash()
+    _sweep_raw()
 
 
 async def _maintenance_loop() -> None:
@@ -330,8 +374,11 @@ def health():
                    ("running" if worker["alive"] else "DEAD — restart the service")},
     }
     ok = all(c["ok"] for c in checks.values())
+    sessions_bytes = sum(_dir_bytes(d) for d in SESSIONS.iterdir()
+                         if d.is_dir() and not d.name.startswith(".")) if SESSIONS.exists() else 0
     return SafeJSONResponse(status_code=200 if ok else 503, content={
         "ok": ok, "checks": checks, "uptime_s": round(time.time() - STARTED_AT),
+        "sessions_bytes": sessions_bytes,
         "queue": {"queued": worker["queued"], "running": worker["running"]}})
 
 
@@ -644,6 +691,7 @@ def sessions(label: str | None = None, opponent: str | None = None,
                 "opponent": meta.get("opponent"),
                 "player": meta.get("player"),
                 "context": meta.get("context"),
+                "disk_bytes": _dir_bytes(d),
                 "uploaded_at": d.stat().st_mtime,
                 **status,
             }
