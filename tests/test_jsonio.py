@@ -25,6 +25,7 @@ import media
 import jobs
 import session_status
 import server
+from api import sessions as sessions_api
 
 client = TestClient(server.app)
 
@@ -136,7 +137,7 @@ def test_corrupt_status_is_reported_as_error_so_the_user_can_reprocess():
     st = session_status.get_status(d)
     assert st["state"] == "error" and "unreadable" in st["error"]
     # state "error" is what unlocks recalibrate/reprocess in the UI
-    assert server._calibratable(st)
+    assert sessions_api._calibratable(st)
 
 
 def test_missing_status_is_still_new_idle():

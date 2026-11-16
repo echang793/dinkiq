@@ -27,6 +27,9 @@ import media
 import jobs
 import session_status
 import server
+from api import uploads
+from api import sessions as sessions_api
+import threading
 
 client = TestClient(server.app)
 
@@ -86,7 +89,7 @@ def test_interrupted_analysis_without_calibration_becomes_a_recoverable_error(sp
     assert spy["analyze"] == [] and out["failed"] == ["nocal"]
     st = _status(d)
     assert st["state"] == "error" and "restart" in st["error"].lower()
-    assert server._calibratable(session_status.get_status(d))  # the user can now recalibrate
+    assert sessions_api._calibratable(session_status.get_status(d))  # the user can now recalibrate
 
 
 def test_interrupted_ingest_is_restarted_from_the_kept_raw_file(spy):
@@ -167,7 +170,7 @@ def _arm_reupload(monkeypatch, readable=True):
     monkeypatch.setattr(media, "probe_video", lambda p: (
         {"codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 300, "duration": 10.0}
         if readable else {"codec": None, "width": 0, "height": 0, "fps": 0.0, "frames": 0, "duration": 0.0}))
-    monkeypatch.setattr(server.threading, "Thread",
+    monkeypatch.setattr(threading, "Thread",
                         lambda target, args, daemon: type("T", (), {"start": lambda self: None})())
 
 
@@ -226,7 +229,7 @@ def test_replacement_with_bad_extension_is_rejected_at_init(monkeypatch):
 
 def test_replacement_over_the_size_limit_keeps_the_original(monkeypatch):
     _arm_reupload(monkeypatch)
-    monkeypatch.setattr(server, "MAX_UPLOAD_BYTES", 5)
+    monkeypatch.setattr(uploads, "MAX_UPLOAD_BYTES", 5)
     d = _mk("re3", {"stage": "done", "state": "done"}, raw="raw.mp4")
     assert _replace("re3", "big.mp4", b"0123456789").status_code == 413
     assert (d / "raw.mp4").read_bytes() == b"x"
@@ -282,7 +285,7 @@ def test_a_retry_racing_the_original_chunk_cannot_corrupt_the_upload():
     first, retry = asyncio.run(run())
     assert first.status_code == 200 and first.json()["offset"] == 8
     assert retry.status_code == 409
-    assert server._upload_part(uid).read_bytes() == b"AAAABBBB"
+    assert uploads._upload_part(uid).read_bytes() == b"AAAABBBB"
 
 
 # ── session id shape ────────────────────────────────────────────────────

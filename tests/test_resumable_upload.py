@@ -14,6 +14,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fastapi.testclient import TestClient
 
 import server
+from api import uploads
+import pipeline
+import threading
 import media
 
 client = TestClient(server.app)
@@ -27,9 +30,9 @@ def _init(filename="clip.mp4", match_type="singles"):
 
 def _cleanup(sid=None, upload_id=None):
     if sid:
-        shutil.rmtree(server.SESSIONS / sid, ignore_errors=True)
+        shutil.rmtree(pipeline.SESSIONS / sid, ignore_errors=True)
     if upload_id:
-        server._upload_part(upload_id).unlink(missing_ok=True)
+        uploads._upload_part(upload_id).unlink(missing_ok=True)
 
 
 def test_init_rejects_unsupported_extension():
@@ -49,7 +52,7 @@ def test_chunks_append_in_order():
         assert r.json()["offset"] == 4
         r = client.put(f"/api/upload/{uid}?offset=4", content=b"BBB")
         assert r.json()["offset"] == 7
-        assert server._upload_part(uid).read_bytes() == b"AAAABBB"
+        assert uploads._upload_part(uid).read_bytes() == b"AAAABBB"
     finally:
         _cleanup(upload_id=uid)
 
@@ -75,7 +78,7 @@ def test_wrong_offset_is_rejected_and_reports_truth():
         r = client.put(f"/api/upload/{uid}?offset=0", content=b"AAAA")  # retry
         assert r.status_code == 409
         assert "4" in r.json()["detail"]
-        assert server._upload_part(uid).read_bytes() == b"AAAA"  # unchanged
+        assert uploads._upload_part(uid).read_bytes() == b"AAAA"  # unchanged
     finally:
         _cleanup(upload_id=uid)
 
@@ -88,7 +91,7 @@ def test_resume_after_simulated_drop_produces_intact_file():
         # connection "drops" — client re-queries and resumes from there
         at = client.get(f"/api/upload/{uid}").json()["offset"]
         client.put(f"/api/upload/{uid}?offset={at}", content=payload[at:])
-        assert server._upload_part(uid).read_bytes() == payload
+        assert uploads._upload_part(uid).read_bytes() == payload
     finally:
         _cleanup(upload_id=uid)
 
@@ -108,7 +111,7 @@ def test_path_traversal_upload_id_rejected():
 
 def test_finish_creates_session_and_starts_ingest(monkeypatch):
     started = []
-    monkeypatch.setattr(server.threading, "Thread",
+    monkeypatch.setattr(threading, "Thread",
                         lambda target, args, daemon: type(
                             "T", (), {"start": lambda self: started.append(args)})())
     monkeypatch.setattr(media, "probe_video", lambda p: {"duration": 12.0})
@@ -120,9 +123,9 @@ def test_finish_creates_session_and_starts_ingest(monkeypatch):
                         json={"filename": "clip.mp4", "match_type": "doubles"})
         assert r.status_code == 200, r.text
         sid = r.json()["session_id"]
-        sdir = server.SESSIONS / sid
+        sdir = pipeline.SESSIONS / sid
         assert (sdir / "raw.mp4").read_bytes() == b"fake video bytes"
-        assert not server._upload_part(uid).exists()  # partial consumed
+        assert not uploads._upload_part(uid).exists()  # partial consumed
         import json as _json
         assert _json.loads((sdir / "meta.json").read_text())["match_type"] == "doubles"
         assert started, "ingest was not started"
@@ -142,20 +145,20 @@ def test_finish_rejects_empty_upload():
 def test_capture_hint_flags_oversized_capture():
     """Analysis runs at 720p30 regardless, so anything larger costs upload
     time and transcode for identical results."""
-    assert server.capture_hint({"height": 2160, "fps": 60.0}) is not None
-    assert "720p30" in server.capture_hint({"height": 2160, "fps": 60.0})
-    assert server.capture_hint({"height": 1080, "fps": 60.0}) is not None   # fps alone
-    assert server.capture_hint({"height": 2160, "fps": 30.0}) is not None   # height alone
+    assert uploads.capture_hint({"height": 2160, "fps": 60.0}) is not None
+    assert "720p30" in uploads.capture_hint({"height": 2160, "fps": 60.0})
+    assert uploads.capture_hint({"height": 1080, "fps": 60.0}) is not None   # fps alone
+    assert uploads.capture_hint({"height": 2160, "fps": 30.0}) is not None   # height alone
 
 
 def test_capture_hint_quiet_for_reasonable_footage():
-    assert server.capture_hint({"height": 1080, "fps": 30.0}) is None
-    assert server.capture_hint({"height": 720, "fps": 30.0}) is None
-    assert server.capture_hint({}) is None
+    assert uploads.capture_hint({"height": 1080, "fps": 30.0}) is None
+    assert uploads.capture_hint({"height": 720, "fps": 30.0}) is None
+    assert uploads.capture_hint({}) is None
 
 
 def test_finish_surfaces_capture_hint(monkeypatch):
-    monkeypatch.setattr(server.threading, "Thread",
+    monkeypatch.setattr(threading, "Thread",
                         lambda target, args, daemon: type(
                             "T", (), {"start": lambda self: None})())
     monkeypatch.setattr(media, "probe_video",
@@ -169,6 +172,6 @@ def test_finish_surfaces_capture_hint(monkeypatch):
         assert "720p30" in r.json()["capture_hint"]
         import json as _json
         assert "capture_hint" in _json.loads(
-            (server.SESSIONS / sid / "meta.json").read_text())
+            (pipeline.SESSIONS / sid / "meta.json").read_text())
     finally:
         _cleanup(sid=sid, upload_id=uid)

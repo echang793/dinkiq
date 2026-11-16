@@ -25,6 +25,8 @@ import media
 import notify
 import session_status
 import server
+from api import uploads
+import shutil
 
 client = TestClient(server.app)
 Usage = namedtuple("Usage", "total used free")
@@ -34,8 +36,8 @@ GB = 1 << 30
 @pytest.fixture
 def healthy(monkeypatch):
     """Everything the health check looks at, in a good state."""
-    monkeypatch.setattr(server.shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setattr(server.shutil, "disk_usage", lambda p: Usage(500 * GB, 100 * GB, 400 * GB))
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: Usage(500 * GB, 100 * GB, 400 * GB))
     monkeypatch.setattr(server, "_weights_present", lambda: True)
 
 
@@ -55,7 +57,7 @@ def test_health_ok_when_everything_is_fine(healthy):
 def test_health_fails_when_a_media_tool_is_missing(healthy, monkeypatch, missing):
     """launchd's minimal PATH once hid ffprobe: the server served fine while
     every analysis died. Health must say so."""
-    monkeypatch.setattr(server.shutil, "which", lambda name: None if name == missing else f"/usr/bin/{name}")
+    monkeypatch.setattr(shutil, "which", lambda name: None if name == missing else f"/usr/bin/{name}")
     r = client.get("/api/health")
     assert r.status_code == 503
     body = r.json()
@@ -64,7 +66,7 @@ def test_health_fails_when_a_media_tool_is_missing(healthy, monkeypatch, missing
 
 
 def test_health_fails_when_disk_is_below_the_reserve(healthy, monkeypatch):
-    monkeypatch.setattr(server.shutil, "disk_usage", lambda p: Usage(500 * GB, 499 * GB, GB // 2))
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: Usage(500 * GB, 499 * GB, GB // 2))
     r = client.get("/api/health")
     assert r.status_code == 503 and r.json()["checks"]["disk"]["ok"] is False
 
@@ -203,7 +205,7 @@ def test_finishing_an_upload_without_ffprobe_is_a_503_with_no_orphan(monkeypatch
     r = client.post(f"/api/upload/{uid}/finish", json={"filename": "c.mp4"})
     assert r.status_code == 503 and "ffprobe" in r.json()["detail"]
     assert list(pipeline.SESSIONS.iterdir()) == []            # no half-made session
-    assert server._upload_part(uid).read_bytes() == b"video bytes"  # upload kept: retry after fixing PATH
+    assert uploads._upload_part(uid).read_bytes() == b"video bytes"  # upload kept: retry after fixing PATH
 
 
 def test_replacing_a_video_without_ffprobe_is_a_503_and_keeps_the_original(monkeypatch):

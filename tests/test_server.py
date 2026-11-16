@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from fastapi.testclient import TestClient
 
 import server
+from api import common
 import jobs
 from pipeline import SESSIONS
 
@@ -266,12 +267,11 @@ def test_calibrate_writes_last_calibration_corners_only(monkeypatch):
     finally:
         import shutil
         shutil.rmtree(d, ignore_errors=True)
-        server.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
+        common.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
 
 
 def test_last_calibration_unavailable_when_never_set():
-    import server
-    server.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
+    common.LAST_CALIBRATION_PATH.unlink(missing_ok=True)
     r = client.get("/api/last-calibration")
     assert r.status_code == 200
     assert r.json() == {"available": False}
