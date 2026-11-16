@@ -146,6 +146,8 @@ def test_sessions_filter_by_context():
 def test_reupload_replaces_video_and_clears_derived(monkeypatch):
     import pipeline
     monkeypatch.setattr(pipeline, "ingest", lambda sdir, raw: None)  # skip real ffmpeg
+    monkeypatch.setattr(pipeline, "probe_video", lambda p: {   # a readable video
+        "codec": "h264", "width": 1280, "height": 720, "fps": 30.0, "frames": 300, "duration": 10.0})
     d = _mk("testreup_a")
     (d / "video.mp4").write_bytes(b"old")
     (d / "metrics.json").write_text("{}")

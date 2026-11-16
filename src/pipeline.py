@@ -16,6 +16,7 @@ resumable:
 import json
 import os
 import queue
+import re
 import subprocess
 import threading
 import traceback
@@ -45,9 +46,17 @@ MODELS = ROOT / "models"
 FPS = 30.0
 
 
+# Plain names only: no leading dot (".trash" is the trash folder, not a session),
+# no separators, no dots at all. Server-made ids are 12 hex chars; the extra
+# room is for hand-made ids like "kitchen_test".
+SESSION_ID_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_-]{0,63}")
+
+
 def session_dir(sid: str) -> Path:
+    if not SESSION_ID_RE.fullmatch(sid or ""):
+        raise ValueError("bad session id")
     d = (SESSIONS / sid).resolve()
-    if d.parent != SESSIONS.resolve():  # path traversal guard
+    if d.parent != SESSIONS.resolve():  # path traversal guard (symlinks)
         raise ValueError("bad session id")
     return d
 
@@ -188,6 +197,72 @@ def queue_position(sdir: Path) -> int | None:
             return _queue_order.index(sdir)
         except ValueError:
             return None
+
+
+BUSY_STATES = ("running", "queued")
+
+
+def is_busy(sdir: Path) -> bool:
+    """True while analysis/ingest owns the session's files."""
+    return get_status(sdir).get("state") in BUSY_STATES
+
+
+def _spawn_ingest(sdir: Path, raw: Path) -> None:
+    threading.Thread(target=ingest, args=(sdir, raw), daemon=True).start()
+
+
+_ANALYSIS_STAGES = ("queued", "tracking", "metrics", "events", "shots", "points", "rating")
+
+
+def recover_interrupted() -> dict:
+    """Repair sessions a server restart left mid-flight.
+
+    The job queue lives only in memory, so a restart (or crash) used to strand
+    sessions in queued/tracking/... forever -- and recalibrate and reprocess
+    both refuse a session that still *looks* busy, leaving delete as the only
+    way out. Call once at startup, before serving:
+      - analysis was queued/running and a calibration exists -> re-queue it
+        (oldest first, so FIFO order survives the restart)
+      - analysis interrupted with no calibration -> error (recalibrate unlocks)
+      - ingest interrupted and the raw upload is still there -> restart ingest
+      - ingest interrupted, no raw file -> error telling the user to re-upload
+    Sessions that are done/errored/idle, trashed, or whose status.json is
+    unreadable are left alone.
+    """
+    out: dict = {"requeued": [], "reingested": [], "failed": []}
+    if not SESSIONS.exists():
+        return out
+    pending: list[tuple[float, Path, str]] = []
+    for d in SESSIONS.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        f = d / "status.json"
+        st = load_json(f)  # missing/corrupt -> {} -> no state -> skipped
+        stage, state = st.get("stage"), st.get("state")
+        if state not in BUSY_STATES:
+            continue
+        if stage == "ingest":
+            raws = sorted(d.glob("raw.*"))
+            if raws:
+                set_status(d, "ingest", "running")
+                _spawn_ingest(d, raws[0])
+                out["reingested"].append(d.name)
+            else:
+                set_status(d, "ingest", "error",
+                           "processing was interrupted by a server restart and the upload "
+                           "is gone — re-upload the video")
+                out["failed"].append(d.name)
+        elif stage in _ANALYSIS_STAGES:
+            pending.append((f.stat().st_mtime, d, stage))
+    for _, d, stage in sorted(pending, key=lambda t: t[0]):
+        if (d / "calibration.json").exists():
+            enqueue_analyze(d)
+            out["requeued"].append(d.name)
+        else:
+            set_status(d, stage, "error",
+                       "analysis was interrupted by a server restart — recalibrate to run it again")
+            out["failed"].append(d.name)
+    return out
 
 
 def _has_audio(raw: Path) -> bool:

@@ -1,7 +1,10 @@
 """DinkIQ — FastAPI server: upload, calibrate, process, results, SPA."""
 
+import asyncio
 import base64
+import datetime
 import json
+import logging
 import math
 import os
 import re
@@ -9,6 +12,7 @@ import secrets
 import shutil
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -55,7 +59,23 @@ class SafeJSONResponse(JSONResponse):
                           indent=None, separators=(",", ":")).encode("utf-8")
 
 
-app = FastAPI(title="DinkIQ", default_response_class=SafeJSONResponse)
+log = logging.getLogger("dinkiq")
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # The job queue is in memory only: repair whatever a restart/crash stranded
+    # before serving. Must never stop the server from coming up.
+    try:
+        recovered = pipeline.recover_interrupted()
+        if any(recovered.values()):
+            log.warning("startup recovery: %s", recovered)
+    except Exception:
+        log.exception("startup recovery failed (continuing)")
+    yield
+
+
+app = FastAPI(title="DinkIQ", default_response_class=SafeJSONResponse, lifespan=_lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -186,6 +206,19 @@ class MetaPatch(BaseModel):
             raise ValueError(f"context must be one of {sorted(SESSION_CONTEXTS)}")
         return v
 
+    @field_validator("played_at")
+    @classmethod
+    def _valid_date(cls, v):
+        # "" is how the form clears the field; anything else must be a real
+        # calendar date. This string is rendered into the sessions table, so
+        # free text here was an HTML-injection vector.
+        if v is None or v == "":
+            return v
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", v):
+            raise ValueError("played_at must be YYYY-MM-DD")
+        datetime.date.fromisoformat(v)  # rejects 2026-13-45
+        return v
+
 
 def _mount_prefix(request: Request) -> str:
     """Path prefix this app is mounted under, from the reverse proxy.
@@ -227,14 +260,16 @@ MAX_UPLOAD_BYTES = 2 << 30  # 2 GB
 WARN_DURATION_S = 30 * 60
 
 
-async def _save_upload(sdir: Path, file: UploadFile) -> Path:
-    """Validate extension + size, stream file into sdir/raw{ext}. Raises
+async def _save_upload(sdir: Path, file: UploadFile, stem: str = "raw") -> Path:
+    """Validate extension + size, stream file into sdir/{stem}{ext}. Raises
     HTTPException on bad ext / oversize; cleans up its own partial write but
-    leaves sdir itself for the caller to manage."""
+    leaves sdir itself for the caller to manage. A replacement upload uses
+    stem="incoming" so it can never overwrite the original before it has been
+    checked."""
     ext = Path(file.filename or "clip.mp4").suffix.lower()
     if ext not in ALLOWED_EXT:
         raise HTTPException(400, f"unsupported file type {ext}")
-    raw = sdir / f"raw{ext}"
+    raw = sdir / f"{stem}{ext}"
     written = 0
     with raw.open("wb") as f:
         while chunk := await file.read(1 << 20):
@@ -255,6 +290,10 @@ MATCH_TYPES = {"singles", "doubles"}
 # the client append in chunks and, after a drop, ask where to pick up.
 UPLOADS = SESSIONS.parent / "uploads"
 UPLOAD_TTL_S = 24 * 3600
+# One writer per upload. A phone that times out retries a chunk while the server
+# is still receiving the first attempt; without this both pass the offset check
+# and both append, duplicating bytes.
+_upload_locks: dict[str, asyncio.Lock] = {}
 
 
 def _upload_part(upload_id: str) -> Path:
@@ -274,6 +313,7 @@ def _sweep_uploads() -> None:
     for f in UPLOADS.iterdir():
         if f.is_file() and now - f.stat().st_mtime > UPLOAD_TTL_S:
             f.unlink(missing_ok=True)
+            _upload_locks.pop(f.stem, None)
 
 
 class UploadInit(BaseModel):
@@ -314,20 +354,21 @@ async def upload_chunk(upload_id: str, request: Request, offset: int = 0):
     """Append one chunk. `offset` must equal what we already hold, so a
     retried or out-of-order chunk can never silently corrupt the file."""
     part = _upload_part(upload_id)
-    if not part.exists():
-        raise HTTPException(404, "unknown upload")
-    have = part.stat().st_size
-    if offset != have:
-        # not an error the client can't recover from — tell it where we are
-        raise HTTPException(409, f"offset mismatch: server has {have}")
-    with part.open("ab") as f:
-        async for chunk in request.stream():
-            have += len(chunk)
-            if have > MAX_UPLOAD_BYTES:
-                f.close()
-                part.unlink(missing_ok=True)
-                raise HTTPException(413, "upload exceeds 2 GB limit")
-            f.write(chunk)
+    async with _upload_locks.setdefault(upload_id, asyncio.Lock()):
+        if not part.exists():
+            raise HTTPException(404, "unknown upload")
+        have = part.stat().st_size
+        if offset != have:
+            # not an error the client can't recover from — tell it where we are
+            raise HTTPException(409, f"offset mismatch: server has {have}")
+        with part.open("ab") as f:
+            async for chunk in request.stream():
+                have += len(chunk)
+                if have > MAX_UPLOAD_BYTES:
+                    f.close()
+                    part.unlink(missing_ok=True)
+                    raise HTTPException(413, "upload exceeds 2 GB limit")
+                f.write(chunk)
     return {"upload_id": upload_id, "offset": have}
 
 
@@ -361,6 +402,7 @@ def upload_finish(upload_id: str, req: UploadFinish):
     sdir.mkdir(parents=True)
     raw = sdir / f"raw{ext}"
     shutil.move(str(part), str(raw))
+    _upload_locks.pop(upload_id, None)
     return _start_session(sdir, raw, req.filename, req.match_type)
 
 
@@ -419,31 +461,56 @@ async def upload(file: UploadFile, match_type: str = Form("singles")):
     return _start_session(sdir, raw, file.filename, match_type)
 
 
+def _refuse_if_busy(sdir: Path) -> None:
+    if pipeline.is_busy(sdir):
+        raise HTTPException(409, "session is still processing")
+
+
+def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
+    """Swap `incoming` in as the session's source video -- but only once it is
+    known to be a readable video. The original raw file and all analysis are
+    untouched until that check passes (this used to delete them first, so a bad
+    replacement left a session with nothing)."""
+    info = pipeline.probe_video(incoming)
+    if not info.get("codec") or info.get("duration", 0) <= 0:
+        incoming.unlink(missing_ok=True)
+        raise HTTPException(400, "the replacement isn't a readable video — the original was kept")
+    for old in sdir.glob("raw.*"):
+        old.unlink(missing_ok=True)
+    raw = sdir / f"raw{incoming.suffix.lower()}"
+    os.replace(incoming, raw)
+    pipeline.clear_derived(sdir)
+    (sdir / "calibration.json").unlink(missing_ok=True)
+    for name in ("video.mp4", "audio.wav", "frame0.jpg", "tracks.parquet",
+                 "ball.parquet", "cuts.json", "ingest.json"):
+        (sdir / name).unlink(missing_ok=True)
+    meta = load_json(sdir / "meta.json")
+    meta["filename"] = filename
+    meta.pop("warning", None)
+    meta.pop("capture_hint", None)
+    dur = info.get("duration", 0.0)
+    if dur > WARN_DURATION_S:
+        meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
+                           "while; consider splitting into games")
+    hint = capture_hint(info)
+    if hint:
+        meta["capture_hint"] = hint
+    atomic_write_json(sdir / "meta.json", meta)
+    pipeline.set_status(sdir, "ingest", "running")  # not the previous run's "done"
+    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
+    return {"session_id": sdir.name, "duration_s": dur,
+            "warning": meta.get("warning"), "capture_hint": hint}
+
+
 @app.post("/api/session/{sid}/reupload")
 async def reupload(sid: str, file: UploadFile):
     """Replace a session's source video without changing its session id —
     for when the first upload was wrong or corrupt. Clears all derived
     analysis artifacts and re-runs ingest."""
     sdir = _sdir(sid)
-    for old in sdir.glob("raw.*"):
-        old.unlink(missing_ok=True)
-    raw = await _save_upload(sdir, file)
-    pipeline.clear_derived(sdir)
-    (sdir / "calibration.json").unlink(missing_ok=True)
-    for name in ("video.mp4", "audio.wav", "frame0.jpg", "tracks.parquet",
-                "ball.parquet", "ingest.json"):
-        (sdir / name).unlink(missing_ok=True)
-    meta_f = sdir / "meta.json"
-    meta = load_json(meta_f)
-    meta["filename"] = file.filename
-    meta.pop("warning", None)
-    dur = pipeline.probe_video(raw).get("duration", 0.0)
-    if dur > WARN_DURATION_S:
-        meta["warning"] = (f"video is {dur/60:.0f} min — analysis will take a "
-                           "while; consider splitting into games")
-    atomic_write_json(meta_f, meta)
-    threading.Thread(target=pipeline.ingest, args=(sdir, raw), daemon=True).start()
-    return {"session_id": sid, "duration_s": dur, "warning": meta.get("warning")}
+    _refuse_if_busy(sdir)
+    incoming = await _save_upload(sdir, file, stem="incoming")
+    return _replace_video(sdir, incoming, file.filename)
 
 
 TRASH = SESSIONS / ".trash"
@@ -524,6 +591,12 @@ def export_sessions_csv():
             row["player"] = _load_json(d, "meta.json").get("player") or DEFAULT_PLAYER_NAME
             rows.append(row)
 
+    def _csv_safe(v):
+        # a cell starting with = + - @ is run as a formula by Excel/Sheets;
+        # label/opponent/player are free text (and shared users can set them)
+        return "'" + v if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+    rows = [{k: _csv_safe(v) for k, v in row.items()} for row in rows]
     buf = io.StringIO()
     fieldnames = ["session_id", "player", "label", "played_at", "opponent",
                  "kitchen_pct", "transition_pct", "distance_ft", "avg_speed_ft_s",
@@ -539,7 +612,6 @@ def export_sessions_csv():
 @app.get("/api/progress")
 def progress():
     """Cross-session trend series (completed sessions, oldest first)."""
-    import datetime
     points = []
     if SESSIONS.exists():
         for d in SESSIONS.iterdir():
@@ -657,6 +729,9 @@ def delete_sessions(req: BulkDelete):
             continue
         if not d.exists():
             errors.append({"id": sid, "error": "not found"})
+            continue
+        if pipeline.is_busy(d):  # moving the folder out from under a running job breaks it
+            errors.append({"id": sid, "error": "session is still processing"})
             continue
         meta_f = d / "meta.json"
         meta = load_json(meta_f)
@@ -886,8 +961,6 @@ def streak():
     DEFAULT_PLAYER_NAME sessions (same "your" scoping as the leaderboard's
     unset-player bucket) — a session tagged with someone else's `player`
     shouldn't inflate your own streak."""
-    import datetime
-
     dates: set[datetime.date] = set()
     if SESSIONS.exists():
         for d in SESSIONS.iterdir():

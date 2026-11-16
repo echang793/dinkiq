@@ -1248,7 +1248,7 @@ async function reanalyze() {
 }
 
 /* ---------------- results ---------------- */
-function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function statCard(v, l) { return '<div class="stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
 const warnSVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
 const tipSVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
@@ -1944,7 +1944,7 @@ async function loadSessions() {
     return '<div class="sess" data-sid="' + s.session_id + '" style="animation-delay:' + (i * 55) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
       '<input type="checkbox" class="cb selBox" value="' + s.session_id + '" onclick="event.stopPropagation(); updateDelBtn()">' +
       '<div class="grow"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div>' +
-        '<div class="meta"><span>' + (s.played_at || fmtDate(s.uploaded_at)) + '</span>' +
+        '<div class="meta"><span>' + esc(s.played_at || fmtDate(s.uploaded_at)) + '</span>' +
         (s.known_dupr ? '<span class="kd">DUPR ' + s.known_dupr + '</span>' : '') + '</div>' +
         (running && s.overall != null ? '<div class="minibar"><i style="width:' + Math.round(100*s.overall) + '%"></i></div>' : '') +
       '</div>' +
@@ -2143,7 +2143,7 @@ async function loadSessionsPage() {
     return '<div class="strow" style="animation-delay:' + (i * 45) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
       '<input type="checkbox" class="cb selBox" value="' + s.session_id + '" onclick="event.stopPropagation(); updateDelBtn()">' +
       '<div class="scell"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div>' +
-        '<div class="sub">' + (s.played_at || fmtDate(s.uploaded_at)) + (s.opponent ? ' · vs ' + esc(s.opponent) : '') + (s.known_dupr ? ' · known DUPR ' + s.known_dupr : '') + '</div></div>' +
+        '<div class="sub">' + esc(s.played_at || fmtDate(s.uploaded_at)) + (s.opponent ? ' · vs ' + esc(s.opponent) : '') + (s.known_dupr ? ' · known DUPR ' + s.known_dupr : '') + '</div></div>' +
       '<div class="scell dupr">' + (band || '<span class="mut">—</span>') + '</div>' +
       '<div class="scell num">' + (s.kitchen_pct != null ? s.kitchen_pct + '%' : '<span class="mut">—</span>') + '</div>' +
       '<div class="scell num">' + (s.avg_rally_hits != null ? s.avg_rally_hits : '<span class="mut">—</span>') + '</div>' +
