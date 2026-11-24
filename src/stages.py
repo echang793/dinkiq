@@ -322,8 +322,16 @@ def analyze(sdir: Path) -> None:
                 tracks, calib, exclude_ids | opponent_ids, index=index)
 
         n_cuts = ensure_cuts(sdir, sdir / "video.mp4", TRACK_STRIDE)
+        # Hits and rallies first: positioning is judged during LIVE PLAY, so the metrics need
+        # the rally windows. (The status labels keep their usual order for the progress bar.)
+        audio_thread.join(timeout=120)
+        hit_times, team_hits, rallies, hitters = events(
+            sdir, tracks, subject, partner, opponents, calib_data["corners_px"],
+            hit_times=audio_result.get("hits"), video_duration=info["duration"],
+            chains=chains)
         m = compute_metrics(pos, FPS, camera_cuts=n_cuts,
-                            secondary_court_tracks=secondary_court_tracks)
+                            secondary_court_tracks=secondary_court_tracks,
+                            play_windows=[(r["start"], r["end"]) for r in rallies])
         m["match_type"] = match_type
         m["identity_issues"] = identity_issues
         if "partner_not_found" in identity_issues:
@@ -338,11 +346,6 @@ def analyze(sdir: Path) -> None:
         atomic_write_json(sdir / "metrics.json", m)
 
         set_status(sdir, "events", "running")
-        audio_thread.join(timeout=120)
-        hit_times, team_hits, rallies, hitters = events(
-            sdir, tracks, subject, partner, opponents, calib_data["corners_px"],
-            hit_times=audio_result.get("hits"), video_duration=info["duration"],
-            chains=chains)
 
         set_status(sdir, "shots", "running")
         subject_chain = chains["subject"]

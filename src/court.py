@@ -118,11 +118,15 @@ def on_court(x: float, y: float, margin: float = 4.0) -> bool:
     return -margin <= x <= COURT_W + margin and -margin <= y <= COURT_L + margin
 
 
-def on_court_mask(points: np.ndarray, margin: float = 4.0) -> np.ndarray:
-    """Vectorised on_court for an (N, 2) array of court-feet points."""
+def on_court_mask(points: np.ndarray, margin: float = 4.0,
+                  margin_y: float | None = None) -> np.ndarray:
+    """Vectorised on_court for an (N, 2) array of court-feet points. margin_y, when
+    given, is the allowance past each BASELINE (the court's length axis) separately
+    from the sideline margin: players routinely stand several feet behind it."""
     pts = np.asarray(points, dtype=float).reshape(-1, 2)
+    my = margin if margin_y is None else margin_y
     return ((pts[:, 0] >= -margin) & (pts[:, 0] <= COURT_W + margin)
-            & (pts[:, 1] >= -margin) & (pts[:, 1] <= COURT_L + margin))
+            & (pts[:, 1] >= -my) & (pts[:, 1] <= COURT_L + my))
 
 
 # How far past the court boundary a bounce can plausibly be and still be a real shot

@@ -15,6 +15,9 @@ GRID_L = int(COURT_L / CELL_FT)   # 22
 MAX_SPEED_FT_S = 30.0  # displacement cap: faster than any human = tracking glitch
 MOVEMENT_BUCKET_S = 60.0  # movement-curve window — coarse enough to smooth noise
 MIN_BUCKET_SAMPLES = 3    # skip a bucket with too little signal to average honestly
+LIVE_PAD_S = 1.0          # include the approach to the first hit and the recovery after the last
+MIN_LIVE_SAMPLES = 450    # ~30 s of tracked positions (15 Hz). The sample had 9.8 s across 3 rallies:
+                          # that slice moved the rating half a band, so too little to trust over all-time
 
 
 def _movement_curve(step_t: np.ndarray, speed: np.ndarray, valid: np.ndarray) -> list[dict]:
@@ -76,8 +79,21 @@ def synergy_report(subject_pos: pd.DataFrame, partner_pos: pd.DataFrame) -> dict
     }
 
 
+def _live_mask(t: np.ndarray, windows: list[tuple[float, float]] | None) -> np.ndarray:
+    m = np.zeros(len(t), dtype=bool)
+    for a, b in windows or []:
+        m |= (t >= a - LIVE_PAD_S) & (t <= b + LIVE_PAD_S)
+    return m
+
+
 def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
-                    secondary_court_tracks: int = 0) -> dict:
+                    secondary_court_tracks: int = 0,
+                    play_windows: list[tuple[float, float]] | None = None) -> dict:
+    """play_windows: (start, end) seconds of each rally. When enough of them is tracked,
+    zone occupancy and the movement curve describe LIVE PLAY only. On the sample ~98%
+    of the video was not in a rally, so "kitchen discipline" (30% of the rating) mostly
+    measured where the subject waited between points. Distance, speed, heatmap and
+    coverage stay whole-session."""
     if len(pos) < fps * 2:
         raise ValueError("subject visible for under 2 seconds — cannot analyze")
 
@@ -96,10 +112,12 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
     distance_ft = float(step[valid].sum())
     active_s = float(t[-1] - t[0])
     avg_speed = distance_ft / active_s if active_s > 0 else 0.0
-    movement_curve = _movement_curve(t[1:], speed, valid)
+    live = _live_mask(t, play_windows)
+    use_live = int(live.sum()) >= MIN_LIVE_SAMPLES
+    movement_curve = _movement_curve(t[1:], speed, valid & live[1:] if use_live else valid)
 
-    # zone occupancy
-    zones = pd.Series([zone_for(v) for v in y])
+    # zone occupancy (live play only when there is enough of it)
+    zones = pd.Series([zone_for(v) for v in (y[live] if use_live else y)])
     zone_pct = (zones.value_counts(normalize=True) * 100).round(1).to_dict()
     for z in ("kitchen", "transition", "baseline"):
         zone_pct.setdefault(z, 0.0)
@@ -126,6 +144,10 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
         warnings.append(
             f"{camera_cuts} camera cuts detected — this looks like broadcast/edited "
             "footage. A fixed tripod angle gives much more reliable analysis.")
+    if play_windows and not use_live:
+        warnings.append(
+            "Very little live play was detected — positioning is measured over all tracked "
+            "time, including walking between points, so it says less about how you play.")
     if secondary_court_tracks > 0:
         warnings.append(
             "Multiple players detected on court — doubles/crowded court isn't "
@@ -137,6 +159,8 @@ def compute_metrics(pos: pd.DataFrame, fps: float, camera_cuts: int = 0,
         "distance_ft": round(distance_ft, 1),
         "avg_speed_ft_s": round(avg_speed, 2),
         "zone_pct": zone_pct,
+        "zone_scope": "live" if use_live else "all",
+        "live_seconds": round(float(live.sum() * np.median(np.diff(t))), 1) if use_live else 0.0,
         "median_dist_from_net_ft": round(median_net, 1),
         "coverage_pct": coverage_pct,
         "heatmap": grid.tolist(),

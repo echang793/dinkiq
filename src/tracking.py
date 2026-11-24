@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from ultralytics import YOLO
 
-from court import NET_Y, CourtCalibration, on_court, on_court_mask
+from court import NET_Y, CourtCalibration, on_court_mask
 from jsonio import atomic_write_json
 
 log = logging.getLogger("dinkiq.tracking")
@@ -278,6 +278,7 @@ def stitch_chain_ids(df: pd.DataFrame, first_id: int, exclude_ids=None,
 
 
 MIN_OPPONENT_FRAMES = 30
+BEHIND_BASELINE_FT = 8.0
 
 
 def _side_lookup(subject_pos: pd.DataFrame | None, fallback_y: float):
@@ -403,5 +404,7 @@ def subject_court_positions(df: pd.DataFrame, subject_id: int,
         "x": pts[:, 0],
         "y": pts[:, 1],
     })
-    mask = [on_court(x, y) for x, y in zip(out["x"], out["y"])]
+    # 4 ft past a sideline, 8 ft past a baseline: returners stand 2-6 ft behind it, and
+    # dropping them as "off court" undercounted baseline time (inflating kitchen time)
+    mask = on_court_mask(out[["x", "y"]].to_numpy(), margin=4.0, margin_y=BEHIND_BASELINE_FT)
     return out[mask].reset_index(drop=True)
