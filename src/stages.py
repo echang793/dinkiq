@@ -16,7 +16,7 @@ from jsonio import atomic_write_json, load_json
 from metrics import compute_metrics
 from pipeline import FPS, MODELS
 from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
-                    serve_side_win_rates, shot_type_outcomes)
+                    serve_side_win_rates, shot_type_outcomes, side_by_rally)
 from session_status import get_status, set_status
 from tracking import (PlayerNotFound, TrackIndex, count_secondary_court_tracks,
                       pick_opponent_chains, pick_subject, run_tracking, stitch_subject,
@@ -95,8 +95,11 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     ev["opponent_track_ids"] = opponents
     ev["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
     ev["opponent_swing_count"] = int(len(player_swings.get("opponent1", [])))
+    table = hits_table(hit_times, hitters, rallies)
+    # hits in no rally (>= 2 hits): serve faults, aces, unreturned serves, stray pops
+    ev["isolated_hits"] = sum(1 for row in table if row["rally"] is None)
     atomic_write_json(sdir / "events.json", ev)
-    atomic_write_json(sdir / "hits.json", hits_table(hit_times, hitters, rallies))
+    atomic_write_json(sdir / "hits.json", table)
 
     clips = sdir / "clips"
     clips.mkdir(exist_ok=True)
@@ -150,13 +153,14 @@ def shots_stage(sdir: Path, calib: CourtCalibration,
 
 def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
                  bounces_court: pd.DataFrame, ball_available: bool,
-                 shots_report: dict) -> None:
+                 shots_report: dict, pos: pd.DataFrame | None = None) -> None:
     """Rally winners + serve/return win rates from hitter attribution, plus
     serve-placement and shot-type breakdowns joined against shots_report --
     two views the app already computes both halves of but never
     cross-references (see points.serve_side_win_rates/shot_type_outcomes)."""
     outcomes = rally_outcomes(rallies, hit_times, hitters,
-                              bounces_court if ball_available else None)
+                              bounces_court if ball_available else None,
+                              my_side_by_rally=side_by_rally(rallies, pos))
     summary = point_summary(outcomes, ball_available, hitters=hitters)
     summary["serve_side_win_rates"] = serve_side_win_rates(
         shots_report.get("serves") or [], outcomes)
@@ -344,7 +348,11 @@ def analyze(sdir: Path) -> None:
         subject_chain = chains["subject"]
         ws_subject = (wrist_speed(subject_chain, FPS)
                      if len(subject_chain) else pd.DataFrame(columns=["t", "speed"]))
-        bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
+        # shot stats are the SUBJECT's: `pos` (what speed/type/serve are joined to) is
+        # the subject's own track, so passing the whole team's hits (partner included)
+        # attributed the partner's shots to the subject's position
+        subject_hit_mask = np.array([h == "subject" for h in hitters], dtype=bool)
+        bounces_court = shots_stage(sdir, calib, pos, hit_times, subject_hit_mask, rallies,
                                     calib_data["corners_px"], ball, ball_stats,
                                     hitters=hitters, ws=ws_subject)
 
@@ -352,7 +360,7 @@ def analyze(sdir: Path) -> None:
         shots_report = load_json(sdir / "shots.json")
         points_stage(sdir, rallies, hit_times, hitters, bounces_court,
                     ball_available=bool(shots_report.get("available")),
-                    shots_report=shots_report)
+                    shots_report=shots_report, pos=pos)
 
         set_status(sdir, "rating", "running")
         from dupr import estimate

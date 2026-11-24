@@ -123,3 +123,29 @@ def on_court_mask(points: np.ndarray, margin: float = 4.0) -> np.ndarray:
     pts = np.asarray(points, dtype=float).reshape(-1, 2)
     return ((pts[:, 0] >= -margin) & (pts[:, 0] <= COURT_W + margin)
             & (pts[:, 1] >= -margin) & (pts[:, 1] <= COURT_L + margin))
+
+
+# How far past the court boundary a bounce can plausibly be and still be a real shot
+# landing, as opposed to a glare/reflection/spectator misdetection the classical ball
+# detector locked onto. points.py's OUT_MARGIN (0.5 ft) is the strict in/out call; this
+# just rejects bounces that can't belong to this court at all. (Was 15 ft: x=34 and
+# y=-11 passed on the sample.)
+PLAUSIBLE_BOUNCE_MARGIN = 8.0
+
+
+def first_bounce_after(bounces, t0: float, until: float | None = None,
+                       margin: float = PLAUSIBLE_BOUNCE_MARGIN):
+    """The earliest plausible bounce after a hit at t0, or None.
+
+    The one lookup shared by serve landings, opponent landings and rally outcomes
+    (they used three slightly different ones and could disagree about the same
+    shot). The window is BOUNCE_LOOKUP_WINDOW_S, but never past `until` -- pass the
+    time of the NEXT hit, because a bounce after that belongs to that shot."""
+    if bounces is None or not len(bounces):
+        return None
+    hi = t0 + BOUNCE_LOOKUP_WINDOW_S if until is None else min(t0 + BOUNCE_LOOKUP_WINDOW_S, until)
+    b = bounces[(bounces["t"] > t0) & (bounces["t"] < hi)]
+    if not len(b):
+        return None
+    ok = b[on_court_mask(b[["x", "y"]].to_numpy(), margin)]
+    return ok.sort_values("t").iloc[0] if len(ok) else None

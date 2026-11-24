@@ -11,8 +11,8 @@ session reports pose/audio metrics only.
 import numpy as np
 import pandas as pd
 
-from court import (BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, court_px_width,
-                   dist_from_net, on_court)
+from court import (COURT_L, COURT_W, NET_Y, court_px_width, dist_from_net,
+                   first_bounce_after)
 from events import PLAYER_HEIGHT_FT
 
 MIN_COVERAGE = 0.15    # below this, ball track too sparse to classify anything
@@ -28,19 +28,17 @@ HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
 DRIVE_SPEED = 1.8
 DINK_SPEED = 0.7
 FT_S_PER_MPH = 1.46667  # 5280/3600
-# how far past the court boundary a bounce can plausibly be and still be a
-# real shot landing (as opposed to a glare/reflection/spectator misdetection
-# the classical ball detector locked onto for one frame). Much wider than
-# points.py's OUT_MARGIN=0.5, which calls a REAL close out — this just
-# rejects bounces so far off-court they can't be a real shot at all, before
-# depth/placement math ever sees them (same reasoning as MAX_PLAUSIBLE_MPH)
-PLAUSIBLE_BOUNCE_MARGIN = 15.0
 # fastest verified competitive paddle-sport shots sit well under this; a
 # classical motion-blob ball detector occasionally locks onto a false
 # positive for one frame, producing a huge apparent px/frame jump — treat
 # anything above as a tracking glitch rather than a real shot speed (same
 # reasoning as metrics.py's MAX_SPEED_FT_S position-glitch clip)
 MAX_PLAUSIBLE_MPH = 75.0
+# ground-plane speed: hitter position -> first bounce, over the flight time. A lower bound
+# (the ball travels further than the ground distance) but free of the perspective
+# foreshortening that makes screen-space speed along the court ~3x too slow.
+GROUND_MIN_FLIGHT_S = 0.12
+GROUND_MIN_DIST_FT = 3.0
 
 
 def mph_from_norm(speed_norm: float | None) -> float | None:
@@ -135,39 +133,31 @@ def serve_side(x: float) -> str:
     return "middle"
 
 
-def _first_plausible_bounce(candidates: pd.DataFrame) -> pd.Series | None:
-    """Earliest bounce in a window that's at least within plausible range of
-    the court — filters out single-frame glare/reflection/spectator
-    misdetections before they're reported as a real shot landing. Wider
-    than the strict in/out margin points.py uses, since a bounce can be a
-    real (if generously-called) out without being a detection glitch."""
-    if not len(candidates):
-        return None
-    ok = candidates[[on_court(x, y, margin=PLAUSIBLE_BOUNCE_MARGIN)
-                     for x, y in zip(candidates["x"], candidates["y"])]]
-    if not len(ok):
-        return None
-    return ok.sort_values("t").iloc[0]
-
-
 def serve_metrics(rallies: list[dict], subject_hits: np.ndarray,
-                  hit_times: np.ndarray, bounces_court: pd.DataFrame) -> dict:
+                  hit_times: np.ndarray, bounces_court: pd.DataFrame,
+                  pos: pd.DataFrame | None = None) -> dict:
     """Serve depth + placement from the first bounce after a subject serve.
 
     bounces_court: bounce points already projected to court feet (x, y, t).
     Depth = how close the serve lands to the receiver's baseline (0 or 44).
     Placement = which third of the court width it landed in (left/middle/right).
+    With `pos` (the subject's court positions) a serve must land on the far side of
+    the net from where the server stood; one that "lands" on the server's own side
+    is a misdetection or a fault, not a measured serve.
     """
     serves = []
     for ri, r in enumerate(rallies):
         idx = int(np.argmin(np.abs(hit_times - r["start"])))
         if not subject_hits[idx]:
             continue  # not the subject's serve
-        b = bounces_court[(bounces_court["t"] > r["start"]) &
-                          (bounces_court["t"] < r["start"] + BOUNCE_LOOKUP_WINDOW_S)]
-        first = _first_plausible_bounce(b)
+        until = float(hit_times[idx + 1]) if idx + 1 < len(hit_times) else None
+        first = first_bounce_after(bounces_court, float(r["start"]), until=until)
         if first is None:
             continue
+        if pos is not None:
+            server = subject_pos_at(pos, float(r["start"]))
+            if server is not None and np.sign(first["y"] - NET_Y) == np.sign(server[1] - NET_Y):
+                continue
         # depth relative to whichever baseline the serve travels toward
         baseline_y = 0.0 if first["y"] < NET_Y else COURT_L
         depth = round(float(abs(baseline_y - first["y"])), 1)
@@ -204,8 +194,8 @@ def opponent_shot_landings(hit_times: np.ndarray, hitters: list[str],
         if h != label:
             continue
         t0 = float(hit_times[i])
-        b = bounces_court[(bounces_court["t"] > t0) & (bounces_court["t"] < t0 + BOUNCE_LOOKUP_WINDOW_S)]
-        first = _first_plausible_bounce(b)
+        until = float(hit_times[i + 1]) if i + 1 < len(hit_times) else None
+        first = first_bounce_after(bounces_court, t0, until=until)
         if first is None:
             continue
         landings.append({"t": round(t0, 2), "x": round(float(first["x"]), 1),
@@ -261,18 +251,41 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
                 "ball": ball_stats}
 
     width_px = court_px_width(corners_px)
+
+    def in_rally(t: float) -> bool:
+        return any(r["start"] - 1e-6 <= t <= r["end"] + 1e-6 for r in rallies)
+
     shots = []
-    for t, mine in zip(hit_times, subject_hits):
-        if not mine:
+    for k, (t, mine) in enumerate(zip(hit_times, subject_hits)):
+        t = float(t)
+        # an isolated pop outside any rally is a fault/ace/noise, not a rally shot
+        if not mine or not in_rally(t):
             continue
-        sp = ball_speed_at(ball, float(t), fps)
-        norm = sp / width_px if sp is not None else None
-        p = subject_pos_at(pos, float(t))
-        shot = {"t": round(float(t), 2),
-               "type": classify_shot(norm, subject_net_dist_at(pos, float(t))),
-               "mph": mph_from_norm(norm)}
+        p = subject_pos_at(pos, t)
+        until = float(hit_times[k + 1]) if k + 1 < len(hit_times) else None
+        mph_raw, norm, source = None, None, None
+        b = first_bounce_after(bounces_court, t, until=until) if p is not None else None
+        if b is not None:
+            flight = float(b["t"]) - t
+            dist = float(np.hypot(float(b["x"]) - p[0], float(b["y"]) - p[1]))
+            if flight >= GROUND_MIN_FLIGHT_S and dist >= GROUND_MIN_DIST_FT:
+                mph_raw = dist / flight / FT_S_PER_MPH
+                norm = mph_raw * FT_S_PER_MPH / COURT_W   # same scale classify_shot's thresholds use
+                source = "ground"
+        if source is None:
+            sp = ball_speed_at(ball, t, fps)
+            norm = sp / width_px if sp is not None else None
+            mph_raw = norm * COURT_W / FT_S_PER_MPH if norm is not None else None
+            source = "screen" if norm is not None else None
+        # one glitch-speed rule for both sources: no number AND no type for an impossible speed
+        mph = round(mph_raw, 1) if mph_raw is not None and mph_raw <= MAX_PLAUSIBLE_MPH else None
+        shot = {"t": round(t, 2),
+                "type": classify_shot(norm if mph is not None else None, subject_net_dist_at(pos, t)),
+                "mph": mph}
+        if mph is not None:
+            shot["mph_source"] = source
         if ws is not None:
-            shot["swing_mph"] = swing_speed_at(ws, float(t))
+            shot["swing_mph"] = swing_speed_at(ws, t)
         if p is not None:
             shot["x"], shot["y"] = round(p[0], 1), round(p[1], 1)
         shots.append(shot)
@@ -294,7 +307,7 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
     }
     report = {"available": True, "ball": ball_stats, "shots": shots, "shot_mix": mix,
              **speed_stats,
-             **serve_metrics(rallies, subject_hits, hit_times, bounces_court)}
+             **serve_metrics(rallies, subject_hits, hit_times, bounces_court, pos=pos)}
     if hitters is not None:
         report["opponent_shots"] = opponent_shot_report(hit_times, hitters, bounces_court)
     return report

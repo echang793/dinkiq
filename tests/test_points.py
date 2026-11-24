@@ -33,21 +33,12 @@ def test_attribute_hitters_doubles_four_way():
     assert out == ["subject", "opponent1", "partner", "opponent2"]
 
 
-def test_rally_outcomes_without_ball_assumes_last_hitter_wins():
-    rallies = [{"start": 1.0, "end": 3.0, "hits": 3, "duration": 2.0}]
-    hits = np.array([1.0, 2.0, 3.0])
-    hitters = ["subject", "opponent1", "subject"]  # subject served, subject hit last
-    out = rally_outcomes(rallies, hits, hitters, bounces_court=None)
-    assert out == [{"server": "subject", "last_hitter": "subject",
-                   "winner": "subject", "unforced_error": False}]
-
-
 def test_rally_outcomes_ball_out_flips_winner_to_unforced_error():
     rallies = [{"start": 1.0, "end": 3.0, "hits": 3, "duration": 2.0}]
     hits = np.array([1.0, 2.0, 3.0])
     hitters = ["subject", "opponent1", "subject"]  # subject hit last...
-    # ...but it bounced well outside the court -> subject's own error, opp team wins
-    bounces = pd.DataFrame({"x": [50.0], "y": [22.0], "t": [3.3]})
+    # ...but it bounced outside the court -> subject's own error, opp team wins
+    bounces = pd.DataFrame({"x": [24.0], "y": [10.0], "t": [3.3]})   # 4 ft wide of the sideline
     out = rally_outcomes(rallies, hits, hitters, bounces_court=bounces)
     assert out[0]["winner"] == "opp_team"
     assert out[0]["unforced_error"] is True
@@ -60,7 +51,7 @@ def test_rally_outcomes_ball_in_keeps_hitter_as_winner():
     bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [3.3]})  # well inbounds
     out = rally_outcomes(rallies, hits, hitters, bounces_court=bounces)
     assert out[0] == {"server": "subject", "last_hitter": "subject",
-                      "winner": "subject", "unforced_error": False}
+                      "winner": "my_team", "unforced_error": False}
 
 
 def test_rally_outcomes_doubles_partner_hit_counts_as_my_team():
@@ -70,7 +61,7 @@ def test_rally_outcomes_doubles_partner_hit_counts_as_my_team():
     bounces = pd.DataFrame({"x": [10.0], "y": [40.0], "t": [3.3]})  # well inbounds
     out = rally_outcomes(rallies, hits, hitters, bounces_court=bounces)
     assert out[0] == {"server": "subject", "last_hitter": "partner",
-                      "winner": "partner", "unforced_error": False}
+                      "winner": "my_team", "unforced_error": False}
 
 
 def test_rally_outcomes_unknown_last_hitter():

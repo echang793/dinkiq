@@ -3,17 +3,22 @@
 Heuristic, gated by available signal:
 - the last hitter of a rally = whoever swung nearest in time to the rally's
   final audio hit (subject vs opponent wrist-speed peaks).
-- when ball tracking is available, a bounce landing outside the court just
-  after that final hit flips the winner to the OTHER player (the hitter made
-  an unforced error); without ball tracking we assume the last shot was a
-  winner — callers should surface that assumption (see point_summary caveat).
+- where the ball first bounced after that final hit decides the point:
+    * on the hitter's own side of the net  -> it never crossed: the hitter's error
+    * on the far side but out of the court -> the hitter's error
+    * on the far side and in               -> the hitter won it
+    * nowhere seen, or within a foot of the net -> unknown. Never a guess.
+- with no ball track at all the winner is unknown. The old rule assumed the last
+  hitter won, but in recreational pickleball most rallies end on an error, so the
+  last hitter is usually the one who LOST: that was a bias, not an approximation.
 """
 
 import numpy as np
 
-from court import BOUNCE_LOOKUP_WINDOW_S, on_court
+from court import BOUNCE_LOOKUP_WINDOW_S, NET_Y, first_bounce_after, on_court
 
 OUT_MARGIN = 0.5  # ft tolerance around the boundary when calling a bounce "out"
+NET_TOL_FT = 1.0  # a bounce this close to the net line can't be assigned to a side
 BOUNCE_WINDOW_S = BOUNCE_LOOKUP_WINDOW_S
 MATCH_WINDOW_S = 0.25
 
@@ -43,41 +48,65 @@ def attribute_hitters(hit_times: np.ndarray,
     return out
 
 
-def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str],
-                   bounces_court=None) -> list[dict]:
-    """Per rally: server, last_hitter, winner, unforced_error (None if unknown).
-
-    server/last_hitter/winner are individual player labels; team membership
-    (TEAM_OF) determines who the "other side" is for the unforced-error flip,
-    so this generalizes unchanged from 2-player singles to 4-player doubles.
-    """
+def side_by_rally(rallies: list[dict], pos) -> list[int]:
+    """+1 if my team plays the near side (y > net) during each rally, -1 the far side,
+    0 when unknown. From the subject's own court positions around the rally -- players
+    switch ends between games, so one side for the whole session is wrong."""
+    if pos is None or not len(pos):
+        return [0] * len(rallies)
+    overall = float(np.median(pos["y"]))
     out = []
     for r in rallies:
+        w = pos[(pos["t"] >= r["start"] - 1.0) & (pos["t"] <= r["end"] + 1.0)]
+        y = float(w["y"].median()) if len(w) else overall
+        out.append(int(np.sign(y - NET_Y)))
+    return out
+
+
+def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str],
+                   bounces_court=None, my_side_by_rally: list[int] | None = None) -> list[dict]:
+    """Per rally: server, last_hitter, winner, unforced_error (None if unknown).
+
+    server / last_hitter are individual player labels; winner is always a team label
+    ("my_team" / "opp_team") or "unknown". bounces_court=None means no usable ball
+    track, so no winner can be called. my_side_by_rally (see side_by_rally) lets a
+    shot into the net be recognised; without it only in/out is checked."""
+    out = []
+    for ri, r in enumerate(rallies):
         idx = [i for i, t in enumerate(hit_times)
                if r["start"] - 1e-6 <= t <= r["end"] + 1e-6]
         if not idx:
             out.append({"server": "unknown", "last_hitter": "unknown",
                        "winner": "unknown", "unforced_error": None})
             continue
-        server = hitters[idx[0]]
         last_i = idx[-1]
         last_hitter = hitters[last_i]
-        if last_hitter == "unknown" or last_hitter not in TEAM_OF:
-            out.append({"server": server, "last_hitter": last_hitter,
-                       "winner": "unknown", "unforced_error": None})
+        row = {"server": hitters[idx[0]], "last_hitter": last_hitter,
+               "winner": "unknown", "unforced_error": None}
+        if last_hitter not in TEAM_OF or bounces_court is None:
+            out.append(row)
             continue
-        other_team = "opp_team" if TEAM_OF[last_hitter] == "my_team" else "my_team"
-        winner, unforced = last_hitter, False
-        if bounces_court is not None and len(bounces_court):
-            t0 = float(hit_times[last_i])
-            near = bounces_court[(bounces_court["t"] > t0) &
-                                 (bounces_court["t"] < t0 + BOUNCE_WINDOW_S)]
-            if len(near):
-                b = near.sort_values("t").iloc[0]
-                if not on_court(float(b["x"]), float(b["y"]), margin=OUT_MARGIN):
-                    winner, unforced = other_team, True
-        out.append({"server": server, "last_hitter": last_hitter,
-                   "winner": winner, "unforced_error": unforced})
+        team = TEAM_OF[last_hitter]
+        other_team = "opp_team" if team == "my_team" else "my_team"
+        b = first_bounce_after(bounces_court, float(hit_times[last_i]))
+        if b is None:
+            out.append(row)
+            continue
+        my_side = my_side_by_rally[ri] if my_side_by_rally and ri < len(my_side_by_rally) else 0
+        hitter_side = my_side if team == "my_team" else -my_side
+        if hitter_side:
+            if abs(float(b["y"]) - NET_Y) <= NET_TOL_FT:
+                out.append(row)             # at the net line: can't tell which side
+                continue
+            if np.sign(float(b["y"]) - NET_Y) == hitter_side:   # landed on the hitter's own side
+                row.update(winner=other_team, unforced_error=True)
+                out.append(row)
+                continue
+        if on_court(float(b["x"]), float(b["y"]), margin=OUT_MARGIN):
+            row.update(winner=team, unforced_error=False)
+        else:
+            row.update(winner=other_team, unforced_error=True)
+        out.append(row)
     return out
 
 
@@ -114,8 +143,9 @@ def point_summary(outcomes: list[dict], ball_available: bool,
         "hits_by_player": hits_by_player,
     }
     if not ball_available:
-        summary["caveat"] = ("Ball tracking unavailable — winners assume the last shot "
-                             "of each rally was in; unforced errors are not detected.")
+        summary["caveat"] = ("Ball tracking unavailable — who won each point can't be determined "
+                             "(the last hitter usually lost it), so points, win rate and unforced "
+                             "errors aren't scored.")
     return summary
 
 
