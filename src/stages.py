@@ -9,7 +9,7 @@ import pandas as pd
 
 import media
 import notify
-from court import NET_Y, CourtCalibration, court_px_width
+from court import NET_Y, CourtCalibration
 from events import (corroborate_hits, detect_hits, detect_swings,
                     rally_metrics, segment_rallies, wrist_speed)
 from jsonio import atomic_write_json, load_json
@@ -25,16 +25,16 @@ from tracking import (PlayerNotFound, TrackIndex, count_secondary_court_tracks,
 log = logging.getLogger("dinkiq.stages")
 
 
-def _swings_from_chain(chain: pd.DataFrame | None, court_width_px: float) -> np.ndarray:
+def _swings_from_chain(chain: pd.DataFrame | None) -> np.ndarray:
     if chain is None or not len(chain):
         return np.array([])
-    return detect_swings(wrist_speed(chain, FPS, court_width_px))
+    return detect_swings(wrist_speed(chain, FPS))
 
 
-def _player_swings(tracks: pd.DataFrame, track_id: int | None, court_width_px: float) -> np.ndarray:
+def _player_swings(tracks: pd.DataFrame, track_id: int | None) -> np.ndarray:
     if track_id is None or not len(tracks):
         return np.array([])
-    return _swings_from_chain(stitch_subject(tracks, track_id), court_width_px)
+    return _swings_from_chain(stitch_subject(tracks, track_id))
 
 
 def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
@@ -69,12 +69,10 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     if hit_times is None:
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
 
-    width_px = court_px_width(corners_px)
-
     def swings_of(label: str, track_id: int | None) -> np.ndarray:
         if chains is not None and label in chains:
-            return _swings_from_chain(chains[label], width_px)
-        return _player_swings(tracks, track_id, width_px)
+            return _swings_from_chain(chains[label])
+        return _player_swings(tracks, track_id)
 
     player_swings = {"subject": swings_of("subject", subject)}
     if partner is not None:
@@ -339,7 +337,7 @@ def analyze(sdir: Path) -> None:
 
         set_status(sdir, "shots", "running")
         subject_chain = chains["subject"]
-        ws_subject = (wrist_speed(subject_chain, FPS, court_px_width(calib_data["corners_px"]))
+        ws_subject = (wrist_speed(subject_chain, FPS)
                      if len(subject_chain) else pd.DataFrame(columns=["t", "speed"]))
         bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
                                     calib_data["corners_px"], ball, ball_stats,

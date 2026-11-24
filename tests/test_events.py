@@ -5,12 +5,11 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from events import (attribute_hits, corroborate_hits, detect_hits, detect_swings,
-                    rally_metrics, segment_rallies, wrist_speed)
+from events import (attribute_hits, corroborate_hits, detect_hits,
+                    rally_metrics, segment_rallies)
 
 SR = 22050
 # two rallies: hits at 1,2,3s then gap, hits at 10,11s
@@ -67,40 +66,11 @@ def test_detect_hits_and_rallies():
         assert rallies[0]["hits"] >= 3 and rallies[1]["hits"] >= 2, rallies
 
 
-def test_swing_detection_and_attribution():
-    fps = 30.0
-    n = 120  # 4 s
-    frames = np.arange(n)
-    lw = np.full((n, 2), 100.0)
-    # swing at t=2.0s: wrist whips 40 px/frame for 6 frames (1200 px/s)
-    for k in range(6):
-        lw[60 + k] = [100 + 40 * k, 100]
-    sub = pd.DataFrame({
-        "frame": frames, "lwx": lw[:, 0], "lwy": lw[:, 1],
-        "rwx": np.zeros(n), "rwy": np.zeros(n),  # right wrist undetected
-    })
-    swings = detect_swings(wrist_speed(sub, fps, court_width_px=900.0))
-    assert len(swings) >= 1 and abs(swings[0] - 2.0) < 0.3, swings
-
-    hits = np.array([2.05, 8.0])
-    mine = attribute_hits(hits, swings)
+def test_attribute_hits_matches_swings_within_the_window():
+    """Swing detection itself is covered in test_swing_model.py."""
+    swings = np.array([2.0])
+    mine = attribute_hits(np.array([2.05, 8.0]), swings)
     assert mine[0] and not mine[1], mine
-
-
-def test_wrist_speed_normalizes_by_court_width():
-    """Same raw wrist motion, different court_width_px, must produce
-    inversely-scaled normalized speed -- this is the whole fix: a raw px/s
-    threshold silently under/over-detects swings depending on how tightly
-    the camera frames the court, same generalization risk shots.py's
-    ball-speed handling already avoids via the same normalization."""
-    fps = 30.0
-    lw = np.array([[100.0, 100.0], [140.0, 100.0], [180.0, 100.0],
-                   [220.0, 100.0], [260.0, 100.0]])  # 40 px/frame = 1200 px/s
-    sub = pd.DataFrame({"frame": np.arange(5), "lwx": lw[:, 0], "lwy": lw[:, 1],
-                        "rwx": np.zeros(5), "rwy": np.zeros(5)})
-    narrow_peak = wrist_speed(sub, fps, court_width_px=600.0)["speed"].max()
-    wide_peak = wrist_speed(sub, fps, court_width_px=1200.0)["speed"].max()
-    assert abs(narrow_peak - 2 * wide_peak) < 1e-6, (narrow_peak, wide_peak)
 
 
 def test_rally_metrics_empty():

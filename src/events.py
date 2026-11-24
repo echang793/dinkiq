@@ -12,12 +12,19 @@ MIN_HIT_GAP_S = 0.25      # two paddle hits can't be closer than this
 RALLY_GAP_S = 5.0         # silence longer than this ends a rally
 MIN_RALLY_HITS = 2        # single bang (dropped paddle, door) is not a rally
 SWING_MATCH_S = 0.25      # swing peak within this window of a hit = subject's shot
-# court-widths/s, not raw px/s: a raw pixel threshold silently under-detects
-# swings on a camera framed wider than whatever distance this was tuned
-# against (same generalization risk shots.mph_from_norm already avoids for
-# ball speed by normalizing against the session's own court pixel width)
-REFERENCE_COURT_WIDTH_PX = 900.0  # approx. court width this threshold assumes
-SWING_MIN_NORM_S = 250.0 / REFERENCE_COURT_WIDTH_PX
+# Swings are wrist motion RELATIVE TO THE BODY, in body-heights per second.
+# The first definition was absolute wrist speed over the court's pixel width: a
+# jogging player's wrists move fast in the image, so every run was a "swing"
+# (36-45% of frames for the sample's opponents), and swing peaks coincided with
+# audio hits less often than random times do (lift 0.87). Measured against the
+# audio pops on the sample, relative motion over the player's own height climbs
+# above chance as the threshold rises: 1.5x at 2.0, 1.9x at 3.0. 2.0 keeps most
+# genuine strokes; soft dinks barely move the wrist and stay below it -- a known
+# limit of pose-only swing detection, tune it here (one clip's worth of evidence).
+SWING_MIN_BODY_HEIGHTS_S = 2.0
+PLAYER_HEIGHT_FT = 5.75     # only used to turn body-heights/s into an approximate mph
+HEIGHT_SMOOTH_SAMPLES = 15  # ~1 s median of bbox height: the bbox jitters, the person doesn't
+MAX_STEP_S = 0.2            # samples further apart than this are not "consecutive"
 
 
 BAND_LO_HZ = 1200      # paddle pop concentrates 1-6 kHz; speech fundamentals,
@@ -78,39 +85,50 @@ def segment_rallies(hit_times: np.ndarray) -> list[dict]:
     ]
 
 
-def wrist_speed(sub: pd.DataFrame, fps: float, court_width_px: float) -> pd.DataFrame:
-    """Per-frame max wrist speed (court-widths/s) for the subject track.
+def wrist_speed(sub: pd.DataFrame, fps: float) -> pd.DataFrame:
+    """Per-sample max wrist speed relative to the body, in body-heights/s.
 
-    Keypoints at (0,0) mean the wrist wasn't detected in that frame — masked out.
-    Normalized by the session's own court pixel width (same reasoning as
-    shots.mph_from_norm) so SWING_MIN_NORM_S means the same real swing speed
-    regardless of how tightly the camera frames the court.
+    The wrist is measured against the bbox centre, so walking and running (where
+    the wrist travels with the body) read ~0 and only motion of the arm relative to
+    the torso counts. Dividing by the player's own smoothed bbox height makes a far
+    (small) and a near (large) player's identical swing identical. Keypoints at
+    (0,0) mean the wrist wasn't detected -- masked. Steps across a gap (> MAX_STEP_S)
+    or between two different track ids are masked: a stitched handover is a
+    different detection whose centre/wrist can jump without any real motion.
     """
     sub = sub.sort_values("frame").reset_index(drop=True)
     t = sub["frame"].to_numpy() / fps
+    h = (sub["y2"] - sub["y1"]).clip(lower=1.0)
+    h = h.rolling(HEIGHT_SMOOTH_SAMPLES, center=True, min_periods=1).median().to_numpy()
+    cx, cy = ((sub["x1"] + sub["x2"]) / 2.0).to_numpy(), ((sub["y1"] + sub["y2"]) / 2.0).to_numpy()
+    dt = np.diff(t)
+    step_ok = dt < MAX_STEP_S
+    if "track_id" in sub:
+        step_ok &= sub["track_id"].to_numpy()[1:] == sub["track_id"].to_numpy()[:-1]
     speeds = []
     for pre in ("lw", "rw"):
-        xy = sub[[f"{pre}x", f"{pre}y"]].to_numpy()
-        ok = (xy != 0).all(axis=1)
+        wx, wy = sub[f"{pre}x"].to_numpy(), sub[f"{pre}y"].to_numpy()
+        seen = (wx != 0) | (wy != 0)
+        rx, ry = wx - cx, wy - cy
         v = np.full(len(sub), np.nan)
-        d = np.hypot(np.diff(xy[:, 0]), np.diff(xy[:, 1])) / np.clip(np.diff(t), 1e-3, None)
-        valid = ok[1:] & ok[:-1]
-        v[1:][valid] = d[valid]
+        d = np.hypot(np.diff(rx), np.diff(ry)) / np.clip(dt, 1e-3, None)
+        valid = seen[1:] & seen[:-1] & step_ok
+        v[1:][valid] = d[valid] / h[1:][valid]
         speeds.append(v)
     stacked = np.column_stack(speeds)
     best = np.full(len(stacked), np.nan)
     any_valid = ~np.isnan(stacked).all(axis=1)  # frames where neither wrist seen stay NaN
     best[any_valid] = np.nanmax(stacked[any_valid], axis=1)
-    return pd.DataFrame({"t": t, "speed": best / court_width_px})
+    return pd.DataFrame({"t": t, "speed": best})
 
 
 def detect_swings(ws: pd.DataFrame) -> np.ndarray:
-    """Swing times: local maxima of wrist speed above threshold, debounced."""
+    """Swing times: local maxima of relative wrist speed above threshold, debounced."""
     s = ws["speed"].to_numpy()
     t = ws["t"].to_numpy()
     swings = []
     for i in range(1, len(s) - 1):
-        if (np.isfinite(s[i]) and s[i] >= SWING_MIN_NORM_S
+        if (np.isfinite(s[i]) and s[i] >= SWING_MIN_BODY_HEIGHTS_S
                 and s[i] >= np.nan_to_num(s[i - 1]) and s[i] >= np.nan_to_num(s[i + 1])
                 and (not swings or t[i] - swings[-1] > MIN_HIT_GAP_S)):
             swings.append(float(t[i]))

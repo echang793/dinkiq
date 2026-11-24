@@ -13,6 +13,7 @@ import pandas as pd
 
 from court import (BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, court_px_width,
                    dist_from_net, on_court)
+from events import PLAYER_HEIGHT_FT
 
 MIN_COVERAGE = 0.15    # below this, ball track too sparse to classify anything
 HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
@@ -81,16 +82,23 @@ def subject_pos_at(pos: pd.DataFrame, t: float) -> tuple[float, float] | None:
     return (float(w["x"].median()), float(w["y"].median())) if len(w) else None
 
 
+MAX_PLAUSIBLE_SWING_MPH = 60.0  # wrist speed; above this is a tracking glitch, not a stroke
+
+
 def swing_speed_at(ws: pd.DataFrame, t: float) -> float | None:
-    """Subject's paddle-swing speed (mph) at hit time t, from wrist keypoint
-    velocity. `ws` (events.wrist_speed) is already normalized to court-
-    widths/s, so this is just a windowed-median lookup (same pattern as
-    subject_pos_at) + the same mph conversion ball_speed_at uses -- putting
-    swing speed on the same scale as ball speed instead of only using it to
-    detect that a swing happened at all."""
+    """Peak wrist speed (mph) within +-0.15 s of hit time t.
+
+    `ws` (events.wrist_speed) is relative-to-body in body-heights/s; the player's
+    height (events.PLAYER_HEIGHT_FT) turns that into feet per second. The PEAK, not
+    the window median: the median of a swing's ramp-up and follow-through badly
+    understates how fast the wrist actually moved. It is wrist speed, not paddle-tip
+    speed, so treat it as a relative effort number."""
     w = ws[(ws["t"] >= t - 0.15) & (ws["t"] <= t + 0.15)]
     speeds = w["speed"].dropna()
-    return mph_from_norm(float(speeds.median())) if len(speeds) else None
+    if not len(speeds):
+        return None
+    mph = round(float(speeds.max()) * PLAYER_HEIGHT_FT / FT_S_PER_MPH, 1)
+    return mph if mph <= MAX_PLAUSIBLE_SWING_MPH else None
 
 
 def serve_side(x: float) -> str:

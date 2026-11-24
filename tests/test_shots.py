@@ -8,9 +8,10 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from events import PLAYER_HEIGHT_FT
 from shots import (ball_speed_at, classify_shot, mph_from_norm,
                    opponent_shot_landings, opponent_shot_report, serve_metrics,
-                   serve_side, shot_report, subject_pos_at, swing_speed_at)
+                   serve_side, shot_report, subject_pos_at)
 
 FPS = 30.0
 CORNERS = [[300.0, 150.0], [1000.0, 150.0], [1250.0, 700.0], [50.0, 700.0]]
@@ -126,12 +127,6 @@ def test_shot_report_includes_mph():
     assert rep["top_shot_mph"] == expected
 
 
-def test_swing_speed_at_windowed_median():
-    ws = pd.DataFrame({"t": [0.9, 1.0, 1.1], "speed": [1.0, 1.0, 1.0]})
-    assert swing_speed_at(ws, 1.0) == mph_from_norm(1.0)
-    assert swing_speed_at(ws, 100.0) is None  # nothing within the window
-
-
 def test_shot_report_includes_swing_mph_when_ws_provided():
     rallies = [{"start": 1.0, "end": 1.0, "hits": 1, "duration": 0.0}]
     hits = np.array([1.0])
@@ -142,7 +137,7 @@ def test_shot_report_includes_swing_mph_when_ws_provided():
     ws = pd.DataFrame({"t": [0.9, 1.0, 1.1], "speed": [1.0, 1.0, 1.0]})
     rep = shot_report(hits, mine, ball, {"coverage": 1.0}, pos, rallies, CORNERS,
                       pd.DataFrame(columns=["x", "y", "t"]), FPS, ws=ws)
-    expected = mph_from_norm(1.0)
+    expected = round(1.0 * PLAYER_HEIGHT_FT / 1.46667, 1)   # 1 body-height/s of wrist speed
     assert rep["shots"][0]["swing_mph"] == expected
     assert rep["avg_swing_mph"] == expected
 
