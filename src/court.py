@@ -116,3 +116,10 @@ def zone_for(y: float) -> str:
 def on_court(x: float, y: float, margin: float = 4.0) -> bool:
     """Whether a point is on or near the court (margin allows out-of-bounds play)."""
     return -margin <= x <= COURT_W + margin and -margin <= y <= COURT_L + margin
+
+
+def on_court_mask(points: np.ndarray, margin: float = 4.0) -> np.ndarray:
+    """Vectorised on_court for an (N, 2) array of court-feet points."""
+    pts = np.asarray(points, dtype=float).reshape(-1, 2)
+    return ((pts[:, 0] >= -margin) & (pts[:, 0] <= COURT_W + margin)
+            & (pts[:, 1] >= -margin) & (pts[:, 1] <= COURT_L + margin))

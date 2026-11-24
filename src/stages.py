@@ -18,24 +18,30 @@ from pipeline import FPS, MODELS
 from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
                     serve_side_win_rates, shot_type_outcomes)
 from session_status import get_status, set_status
-from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject,
-                      run_tracking, stitch_chain_ids, stitch_subject,
+from tracking import (PlayerNotFound, TrackIndex, count_secondary_court_tracks,
+                      pick_opponent_chains, pick_subject, run_tracking, stitch_subject,
                       subject_court_positions, tracks_are_stale)
 
 log = logging.getLogger("dinkiq.stages")
 
 
+def _swings_from_chain(chain: pd.DataFrame | None, court_width_px: float) -> np.ndarray:
+    if chain is None or not len(chain):
+        return np.array([])
+    return detect_swings(wrist_speed(chain, FPS, court_width_px))
+
+
 def _player_swings(tracks: pd.DataFrame, track_id: int | None, court_width_px: float) -> np.ndarray:
     if track_id is None or not len(tracks):
         return np.array([])
-    chain = stitch_subject(tracks, track_id)
-    return detect_swings(wrist_speed(chain, FPS, court_width_px)) if len(chain) else np.array([])
+    return _swings_from_chain(stitch_subject(tracks, track_id), court_width_px)
 
 
 def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
           opponents: list[int], corners_px: list[list[float]],
           hit_times: np.ndarray | None = None,
-          video_duration: float | None = None):
+          video_duration: float | None = None,
+          chains: dict[str, pd.DataFrame] | None = None):
     """M2: paddle hits from audio, rallies, swings, per-rally clips.
 
     Degrades gracefully: no/quiet audio -> events.json records zero rallies.
@@ -46,6 +52,10 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     the points stage; team_hits is True for any hit attributed to subject OR
     partner (used for "my team's shots" downstream, identical to
     subject-only in singles since partner is always None there).
+
+    `chains` ('subject'/'partner'/'opponent1'/'opponent2' -> that person's
+    stitched track frame) is built once by analyze() with no fragment shared
+    between players; without it each is stitched here from its track id.
 
     `video_duration` should be the real ffprobe duration — used as the
     play_time_pct denominator. Falls back to the last tracked frame only
@@ -60,11 +70,17 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
         hit_times = detect_hits(audio) if audio.exists() else np.array([])
 
     width_px = court_px_width(corners_px)
-    player_swings = {"subject": _player_swings(tracks, subject, width_px)}
+
+    def swings_of(label: str, track_id: int | None) -> np.ndarray:
+        if chains is not None and label in chains:
+            return _swings_from_chain(chains[label], width_px)
+        return _player_swings(tracks, track_id, width_px)
+
+    player_swings = {"subject": swings_of("subject", subject)}
     if partner is not None:
-        player_swings["partner"] = _player_swings(tracks, partner, width_px)
+        player_swings["partner"] = swings_of("partner", partner)
     for i, opp_id in enumerate(opponents[:2]):
-        player_swings[f"opponent{i + 1}"] = _player_swings(tracks, opp_id, width_px)
+        player_swings[f"opponent{i + 1}"] = swings_of(f"opponent{i + 1}", opp_id)
 
     # drop audio "hits" with no matching wrist swing (warmup/pre-play noise)
     # before segmenting into rallies, so getting-ready footage isn't scored
@@ -256,42 +272,58 @@ def analyze(sdir: Path) -> None:
         match_type = meta.get("match_type", "singles")
         doubles = match_type == "doubles"
 
+        index = TrackIndex(tracks) if len(tracks) else None
+        # A tap that lands on nobody fails the analysis with a message that says so
+        # (PlayerNotFound -> status error) rather than quietly analysing someone else.
         subject = pick_subject(tracks, tuple(calib_data["self_px"]))
-        pos = subject_court_positions(tracks, subject, calib, FPS)
+        partner = None
+        identity_issues: list[str] = []
+        if doubles and calib_data.get("partner_px"):
+            try:
+                partner = pick_subject(tracks, tuple(calib_data["partner_px"]),
+                                       exclude_ids={subject})
+            except PlayerNotFound:
+                # the partner is secondary: analyse the subject alone and say so
+                identity_issues.append("partner_not_found")
+        # one exclusive chain per person: no fragment is ever shared between players
+        subject_ids = index.chain_ids(subject, exclude={partner} if partner is not None else ())
+        partner_ids = (index.chain_ids(partner, exclude=set(subject_ids))
+                       if partner is not None else [])
+        chains: dict[str, pd.DataFrame] = {"subject": index.frame_for(subject_ids)}
+        if partner is not None:
+            chains["partner"] = index.frame_for(partner_ids)
+
+        pos = subject_court_positions(tracks, subject, calib, FPS, chain=chains["subject"])
         pos.to_parquet(sdir / "positions.parquet", index=False)
 
-        subject_ids = stitch_chain_ids(tracks, subject) if len(tracks) else {subject}
-        partner = None
-        partner_ids: set[int] = set()
-        if doubles and calib_data.get("partner_px") and len(tracks):
-            partner = pick_subject(tracks, tuple(calib_data["partner_px"]))
-            partner_ids = stitch_chain_ids(tracks, partner)
-
         subject_median_y = float(np.median(pos["y"])) if len(pos) else NET_Y
-        exclude_ids = subject_ids | partner_ids
-        opponents = pick_opponents(tracks, calib, exclude_ids, subject_median_y,
-                                   n=2 if doubles else 1) if len(tracks) else []
+        exclude_ids = set(subject_ids) | set(partner_ids)
+        opp_chains = pick_opponent_chains(
+            tracks, calib, exclude_ids, pos, subject_median_y,
+            n=2 if doubles else 1, index=index)
+        opponents = [c[0] for c in opp_chains]
+        opponent_ids: set[int] = set()
+        for i, chain_ids in enumerate(opp_chains):
+            chains[f"opponent{i + 1}"] = index.frame_for(chain_ids)
+            opponent_ids |= set(chain_ids)
 
         # 4 known players is expected in doubles, not an ambiguity signal —
         # only dock confidence for an unexpected extra person in singles.
-        # Opponents need the same stitching subject/partner already get:
-        # the tracker fragments ids on occlusion/camera motion, so without
-        # this every re-acquired fragment of the SAME opponent looked like
-        # a brand-new "extra person" on court (observed: 178 phantom
-        # players from one real opponent in a single-camera clip).
-        opponent_ids: set[int] = set()
-        for opp_id in opponents:
-            opponent_ids |= stitch_chain_ids(tracks, opp_id)
-
         secondary_court_tracks = 0
         if not doubles and len(tracks):
-            all_ids = exclude_ids | opponent_ids
-            secondary_court_tracks = count_secondary_court_tracks(tracks, calib, all_ids)
+            secondary_court_tracks = count_secondary_court_tracks(
+                tracks, calib, exclude_ids | opponent_ids, index=index)
 
         n_cuts = ensure_cuts(sdir, sdir / "video.mp4", TRACK_STRIDE)
         m = compute_metrics(pos, FPS, camera_cuts=n_cuts,
                             secondary_court_tracks=secondary_court_tracks)
         m["match_type"] = match_type
+        m["identity_issues"] = identity_issues
+        if "partner_not_found" in identity_issues:
+            m["warnings"].append(
+                "Couldn't find your partner where you tapped — analysing you alone; "
+                "your partner's shots aren't separated from the opponents'. Recalibrate and "
+                "tap directly on your partner.")
         m["subject_track_id"] = subject
         m["partner_track_id"] = partner
         m["opponent_track_ids"] = opponents
@@ -302,10 +334,11 @@ def analyze(sdir: Path) -> None:
         audio_thread.join(timeout=120)
         hit_times, team_hits, rallies, hitters = events(
             sdir, tracks, subject, partner, opponents, calib_data["corners_px"],
-            hit_times=audio_result.get("hits"), video_duration=info["duration"])
+            hit_times=audio_result.get("hits"), video_duration=info["duration"],
+            chains=chains)
 
         set_status(sdir, "shots", "running")
-        subject_chain = stitch_subject(tracks, subject) if len(tracks) else pd.DataFrame()
+        subject_chain = chains["subject"]
         ws_subject = (wrist_speed(subject_chain, FPS, court_px_width(calib_data["corners_px"]))
                      if len(subject_chain) else pd.DataFrame(columns=["t", "speed"]))
         bounces_court = shots_stage(sdir, calib, pos, hit_times, team_hits, rallies,
