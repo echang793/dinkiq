@@ -5,6 +5,8 @@ keypoints) plus the subject's projected court positions. Feet position =
 bottom-center of bbox. Wrists feed M2 swing detection.
 """
 
+import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -12,8 +14,12 @@ import pandas as pd
 from ultralytics import YOLO
 
 from court import NET_Y, CourtCalibration, on_court
+from jsonio import atomic_write_json
+
+log = logging.getLogger("dinkiq.tracking")
 
 MODEL_NAME = "yolov8s-pose.pt"
+POSE_IMGSZ_DEFAULT = 960   # far-court players are small; 960 sees them better than 640
 # COCO keypoint indices
 KP_LWRIST, KP_RWRIST = 9, 10
 
@@ -22,6 +28,40 @@ COLUMNS = ["frame", "track_id", "x1", "y1", "x2", "y2", "conf",
 
 
 TRACK_STRIDE = 2  # process every 2nd frame (15 fps effective); 1 = accuracy mode
+
+
+def pose_imgsz() -> int:
+    """Pose-model input size (DINKIQ_POSE_IMGSZ overrides; garbage -> default)."""
+    try:
+        return int(os.environ.get("DINKIQ_POSE_IMGSZ", POSE_IMGSZ_DEFAULT))
+    except ValueError:
+        return POSE_IMGSZ_DEFAULT
+
+
+def select_device() -> str:
+    """Where to run the pose model. ultralytics only picks the GPU if asked, so the
+    default was the CPU: measured 32 ms/frame at 640 vs 10.6 ms on Apple-silicon MPS
+    (16.8 ms at 960, still 2x faster than the old default). DINKIQ_DEVICE overrides."""
+    forced = os.environ.get("DINKIQ_DEVICE", "").strip()
+    if forced:
+        return forced
+    import torch
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda:0"
+    return "cpu"
+
+
+def tracks_are_stale(meta: dict | None) -> bool:
+    """True when cached tracks came from a different pose model or input size than
+    the current settings, so a re-analysis should redo detection instead of
+    silently reusing them. Tracks without metadata predate this check and are
+    trusted: never throw away minutes of work on a guess. (device doesn't matter;
+    results are the same either way.)"""
+    if not meta:
+        return False
+    return meta.get("model") != MODEL_NAME or meta.get("imgsz") != pose_imgsz()
 
 
 def run_tracking(video: Path, out_parquet: Path, models_dir: Path,
@@ -33,38 +73,58 @@ def run_tracking(video: Path, out_parquet: Path, models_dir: Path,
     is invoked per processed frame so cheap consumers (ball detection) reuse
     the same decode instead of reading the video again. Frame numbers written
     to the parquet are REAL video frame indices (i * stride).
+
+    Runs on the GPU when there is one; if that fails before the first frame (an
+    unsupported op on MPS, say) it retries once on the CPU rather than failing
+    the analysis. The model/size/device used are written next to the parquet
+    (tracks.meta.json) so a later change of model can be told apart from a cache hit.
     """
     if stride is None:
         stride = TRACK_STRIDE  # resolved at call time so tests/config can override
-    model = YOLO(str(models_dir / MODEL_NAME))
-    rows = []
-    # NOTE: do NOT pass half=True — on MPS it hits a deprecated fp16 fallback
-    # that is ~27x SLOWER (measured 1430 ms/frame vs 53 ms/frame)
-    results = model.track(
-        source=str(video), stream=True, persist=True,
-        classes=[0], tracker="bytetrack.yaml", verbose=False,
-        vid_stride=stride,
-    )
-    for i, r in enumerate(results):
-        real_f = i * stride
-        xyxy = None
-        if r.boxes is not None and r.boxes.id is not None:
-            ids = r.boxes.id.cpu().numpy().astype(int)
-            xyxy = r.boxes.xyxy.cpu().numpy()
-            confs = r.boxes.conf.cpu().numpy()
-            if r.keypoints is not None and r.keypoints.xy is not None:
-                kps = r.keypoints.xy.cpu().numpy()  # (n, 17, 2); (0,0) = undetected
-            else:
-                kps = np.zeros((len(ids), 17, 2))
-            for tid, box, conf, kp in zip(ids, xyxy, confs, kps):
-                rows.append((real_f, tid, *box.tolist(), float(conf),
-                             *kp[KP_LWRIST].tolist(), *kp[KP_RWRIST].tolist()))
-        if frame_cb is not None:
-            frame_cb(real_f, r.orig_img, xyxy)
-        if progress_cb and i % 30 == 0:
-            progress_cb(real_f)
+    device, imgsz = select_device(), pose_imgsz()
+    attempts = [device] if device == "cpu" else [device, "cpu"]
+    for k, dev in enumerate(attempts):
+        model = YOLO(str(models_dir / MODEL_NAME))  # fresh model: its tracker state is per-instance
+        rows: list[tuple] = []
+        n = 0
+        try:
+            # NOTE: do NOT pass half=True — on MPS it hits a deprecated fp16 fallback
+            # that is ~27x SLOWER (measured 1430 ms/frame vs 53 ms/frame)
+            results = model.track(
+                source=str(video), stream=True, persist=True,
+                classes=[0], tracker="bytetrack.yaml", verbose=False,
+                vid_stride=stride, imgsz=imgsz, device=dev,
+            )
+            for i, r in enumerate(results):
+                n += 1
+                real_f = i * stride
+                xyxy = None
+                if r.boxes is not None and r.boxes.id is not None:
+                    ids = r.boxes.id.cpu().numpy().astype(int)
+                    xyxy = r.boxes.xyxy.cpu().numpy()
+                    confs = r.boxes.conf.cpu().numpy()
+                    if r.keypoints is not None and r.keypoints.xy is not None:
+                        kps = r.keypoints.xy.cpu().numpy()  # (n, 17, 2); (0,0) = undetected
+                    else:
+                        kps = np.zeros((len(ids), 17, 2))
+                    for tid, box, conf, kp in zip(ids, xyxy, confs, kps):
+                        rows.append((real_f, tid, *box.tolist(), float(conf),
+                                     *kp[KP_LWRIST].tolist(), *kp[KP_RWRIST].tolist()))
+                if frame_cb is not None:
+                    frame_cb(real_f, r.orig_img, xyxy)
+                if progress_cb and i % 30 == 0:
+                    progress_cb(real_f)
+            device = dev
+            break
+        except Exception:
+            if n > 0 or k == len(attempts) - 1:
+                raise  # mid-video, or nothing left to fall back to
+            log.warning("pose model failed on %s before the first frame; retrying on cpu",
+                        dev, exc_info=True)
     df = pd.DataFrame(rows, columns=COLUMNS)
     df.to_parquet(out_parquet, index=False)
+    atomic_write_json(out_parquet.with_name("tracks.meta.json"),
+                      {"model": MODEL_NAME, "imgsz": imgsz, "device": device, "stride": stride})
     return df
 
 

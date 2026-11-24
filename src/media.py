@@ -43,24 +43,96 @@ def _has_audio(raw: Path) -> bool:
     return bool(proc.stdout.strip())
 
 
+def _parse_rate(rate: str | None) -> float:
+    num, _, den = (rate or "0/1").partition("/")
+    try:
+        d = float(den or 1)
+        return float(num) / d if d else 0.0
+    except ValueError:
+        return 0.0
+
+
+def _rotation_of(stream: dict) -> int:
+    """0/90/180/270. Phones record landscape pixels plus a rotation flag, stored
+    either as display-matrix side data (newer ffmpeg) or a `rotate` tag (older)."""
+    raw = None
+    for sd in stream.get("side_data_list") or []:
+        if "rotation" in sd:
+            raw = sd["rotation"]
+    if raw is None:
+        raw = (stream.get("tags") or {}).get("rotate")
+    try:
+        return abs(int(float(raw))) % 360
+    except (TypeError, ValueError):
+        return 0
+
+
 def probe_video(path: Path) -> dict:
     try:
         proc = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-             "stream=codec_name,width,height,r_frame_rate,nb_frames:format=duration",
+             "stream=codec_name,width,height,r_frame_rate,avg_frame_rate,nb_frames"
+             ":stream_tags=rotate:stream_side_data=rotation:format=duration",
              "-of", "json", str(path)],
             capture_output=True, text=True)
     except FileNotFoundError as e:
         raise _tool_missing("ffprobe") from e
     info = json.loads(proc.stdout or "{}")
     st = (info.get("streams") or [{}])[0]
-    num, _, den = (st.get("r_frame_rate") or "0/1").partition("/")
-    fps = float(num) / float(den or 1) if float(den or 1) else 0.0
+    fps = _parse_rate(st.get("r_frame_rate"))
+    avg = _parse_rate(st.get("avg_frame_rate"))
     duration = float(info.get("format", {}).get("duration") or 0.0)
     frames = int(st.get("nb_frames") or 0) or int(duration * fps)
-    return {"codec": st.get("codec_name"), "width": int(st.get("width") or 0),
-            "height": int(st.get("height") or 0), "fps": round(fps, 3),
-            "frames": frames, "duration": round(duration, 2)}
+    width, height = int(st.get("width") or 0), int(st.get("height") or 0)
+    rotation = _rotation_of(st)
+    dw, dh = (height, width) if rotation in (90, 270) else (width, height)
+    return {"codec": st.get("codec_name"), "width": width, "height": height, "fps": round(fps, 3),
+            "frames": frames, "duration": round(duration, 2), "rotation": rotation,
+            # r_frame_rate is the container's nominal rate, avg_frame_rate what the
+            # frames actually average to: they diverge on variable-frame-rate video
+            "vfr": bool(fps and avg and abs(avg - fps) / fps > 0.01),
+            "portrait": dh > dw}
+
+
+TARGET_HEIGHT = 720
+FPS_TOLERANCE = 0.01   # 29.97 differs from 30 by 0.03: ~4 s of drift against the audio per hour
+
+
+def normalize_plan(src: dict) -> dict:
+    """Remux (fast, lossless) only when the upload already IS the analysis format:
+    H.264, exactly 720p, constant 30 fps, upright. Everything else is re-encoded.
+
+    The old rule remuxed any H.264 <= 720p at 29-31 fps, which kept a 360p clip at
+    360p (every pixel threshold downstream is tuned for 720p), let 29.97 fps drift
+    ~4 s against the audio over an hour (frame -> time is a fixed /30), and kept a
+    phone's rotation as side-data that OpenCV may ignore."""
+    reasons = []
+    if src.get("codec") != "h264":
+        reasons.append(f"codec {src.get('codec')} is re-encoded to h264")
+    h = src.get("height", 0)
+    if h < TARGET_HEIGHT:
+        reasons.append(f"upscale to 720p (source is {h}p; the analysis thresholds assume 720p)")
+    elif h > TARGET_HEIGHT:
+        reasons.append(f"downscale to 720p (source is {h}p)")
+    if abs(src.get("fps", 0.0) - FPS) > FPS_TOLERANCE:
+        reasons.append(f"fps {src.get('fps')} is re-timed to a constant 30")
+    if src.get("vfr"):
+        reasons.append("variable frame rate needs a constant 30 fps")
+    if src.get("rotation", 0):
+        reasons.append(f"rotation {src['rotation']} must be applied to the pixels")
+    return {"mode": "reencode" if reasons else "copy", "reason": "; ".join(reasons)}
+
+
+def normalize_command(raw: Path, video: Path, src: dict) -> list[str]:
+    if normalize_plan(src)["mode"] == "copy":
+        return ["ffmpeg", "-y", "-i", str(raw), "-an", "-c:v", "copy", str(video)]
+    return ["ffmpeg", "-y", "-i", str(raw),
+            "-vf", f"scale=-2:{TARGET_HEIGHT}",   # ffmpeg applies the rotation flag first
+            "-fps_mode", "cfr", "-r", str(int(FPS)),
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-pix_fmt", "yuv420p",                # 10-bit/HDR phone video isn't decodable everywhere
+            "-g", str(int(FPS)),                  # ~1 s GOP: clips cut with -c copy start where asked
+            "-an", str(video)]
 
 
 FRIENDLY_FFMPEG_ERRORS = (
@@ -114,8 +186,8 @@ def build_highlights(sdir: Path) -> Path | None:
 def ingest(sdir: Path, raw: Path) -> None:
     """Normalize video, extract audio (if present) + first frame.
 
-    Fast path: already-H.264, <=720p, ~30fps input is remuxed (-c copy)
-    instead of re-encoded — near-instant for typical phone exports.
+    Fast path (see normalize_plan): an upload that is already 720p30 constant-rate
+    H.264 is remuxed (-c copy) — near-instant. Anything else is re-encoded to that.
     """
     try:
         set_status(sdir, "ingest", "running")
@@ -126,13 +198,10 @@ def ingest(sdir: Path, raw: Path) -> None:
             set_status(sdir, "ingest", "error", msg)
             notify.notify_webhook(sdir, ok=False, error=msg, what="prepare the video")
             return
-        if (src["codec"] == "h264" and src["height"] <= 720
-                and 29.0 <= src["fps"] <= 31.0):
-            _run(["ffmpeg", "-y", "-i", str(raw), "-an", "-c:v", "copy", str(video)])
-        else:
-            _run(["ffmpeg", "-y", "-i", str(raw),
-                  "-vf", "scale=-2:720", "-r", str(int(FPS)),
-                  "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-an", str(video)])
+        plan = normalize_plan(src)
+        log.info("ingest %s: %s%s", sdir.name, plan["mode"],
+                 f" ({plan['reason']})" if plan["reason"] else "")
+        _run(normalize_command(raw, video, src))
         if _has_audio(raw):  # audio only needed for hit detection
             _run(["ffmpeg", "-y", "-i", str(raw), "-vn", "-ac", "1", "-ar", "22050",
                   str(sdir / "audio.wav")])

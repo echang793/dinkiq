@@ -20,7 +20,7 @@ from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
 from session_status import get_status, set_status
 from tracking import (count_secondary_court_tracks, pick_opponents, pick_subject,
                       run_tracking, stitch_chain_ids, stitch_subject,
-                      subject_court_positions)
+                      subject_court_positions, tracks_are_stale)
 
 log = logging.getLogger("dinkiq.stages")
 
@@ -170,6 +170,18 @@ def ensure_cuts(sdir: Path, video: Path, stride: int) -> int:
     return len(cuts["cut_frames"])
 
 
+def discard_stale_tracks(sdir: Path) -> bool:
+    """Drop cached detection that came from a different pose model/input size, so
+    this run redoes it. Tracks without metadata (made before it existed) are kept."""
+    tracks_pq = sdir / "tracks.parquet"
+    if tracks_pq.exists() and tracks_are_stale(load_json(sdir / "tracks.meta.json")):
+        log.info("cached tracks for %s came from a different pose model/size; redoing detection", sdir.name)
+        for name in ("tracks.parquet", "ball.parquet", "tracks.meta.json", "cuts.json"):
+            (sdir / name).unlink(missing_ok=True)
+        return True
+    return False
+
+
 def analyze(sdir: Path) -> None:
     """Track players, project subject positions, compute metrics.
 
@@ -203,6 +215,7 @@ def analyze(sdir: Path) -> None:
         set_status(sdir, "tracking", "running", progress=0.0)
         tracks_pq = sdir / "tracks.parquet"
         ball_pq = sdir / "ball.parquet"
+        discard_stale_tracks(sdir)
         if tracks_pq.exists():
             tracks = pd.read_parquet(tracks_pq)  # recalibration: reuse detection
             if ball_pq.exists():

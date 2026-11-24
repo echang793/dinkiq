@@ -219,6 +219,9 @@ CAPTURE_HINT_FPS = 31.0
 def capture_hint(info: dict) -> str | None:
     """Suggest a leaner capture setting when the source is bigger than the
     pipeline can use. None when the footage is already reasonable."""
+    if info.get("portrait"):
+        return ("Recorded in portrait. Hold the phone sideways (landscape) so the whole "
+                "court fits in the frame — a portrait video leaves the far side tiny.")
     too_tall = info.get("height", 0) > CAPTURE_HINT_HEIGHT
     too_fast = info.get("fps", 0) > CAPTURE_HINT_FPS
     if not (too_tall or too_fast):
@@ -268,7 +271,7 @@ def _replace_video(sdir: Path, incoming: Path, filename: str) -> dict:
     pipeline.clear_derived(sdir)
     (sdir / "calibration.json").unlink(missing_ok=True)
     for name in ("video.mp4", "audio.wav", "frame0.jpg", "tracks.parquet",
-                 "ball.parquet", "cuts.json", "ingest.json"):
+                 "ball.parquet", "tracks.meta.json", "cuts.json", "ingest.json"):
         (sdir / name).unlink(missing_ok=True)
     meta = load_json(sdir / "meta.json")
     meta["filename"] = filename
