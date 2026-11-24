@@ -20,6 +20,12 @@ MAX_AREA_PX = 400
 MAX_JUMP_PX = 120      # max per-frame travel (720p, 30fps)
 MIN_TRACK_LEN = 5      # shorter linked runs are noise
 MAX_GAP_FRAMES = 3     # allow short detection dropouts within a track
+# A linked run only counts as a BALL if it behaves like one. On the sample 5,579
+# "segments" (one 1,835 frames long: a static object) reported 96% coverage, so every
+# ball-derived metric passed its gate on noise. Units are real video frames / 720p px.
+MAX_SEGMENT_FRAMES = 90      # a flight lasts seconds, not tens of seconds
+MIN_SEGMENT_NET_PX = 25.0    # first-to-last displacement: static marks and jitter fail
+MIN_SEGMENT_SPEED_PX = 2.0   # mean path length per real frame
 
 # color-plausibility gate: pickleballs are small bright objects, but they're
 # sold in yellow, orange, green, pink/red, and white -- nearly the whole hue
@@ -137,10 +143,11 @@ def detect_cuts(video: Path, stride: int = 1) -> list[int]:
     return cutdet.cut_frames
 
 
-def detect_candidates(video: Path, exclude_boxes: pd.DataFrame | None = None):
+def detect_candidates(video: Path, exclude_boxes: pd.DataFrame | None = None, stride: int = 1):
     """Standalone per-frame candidate pass (own decode). The integrated
     pipeline uses BallDetector inside the tracking loop instead; this path
-    remains for tests and ad-hoc analysis."""
+    remains for tests and ad-hoc analysis. `stride` feeds only every stride-th
+    frame, matching the tracking loop it replaces, so the two paths agree."""
     boxes_by_frame: dict[int, np.ndarray] = {}
     if exclude_boxes is not None and len(exclude_boxes):
         for f, g in exclude_boxes.groupby("frame"):
@@ -153,7 +160,8 @@ def detect_candidates(video: Path, exclude_boxes: pd.DataFrame | None = None):
         ok, frame = cap.read()
         if not ok:
             break
-        det.update(i, frame, boxes_by_frame.get(i))
+        if i % stride == 0:
+            det.update(i, frame, boxes_by_frame.get(i))
         i += 1
     cap.release()
     return det.candidates, i  # candidates, total frames
@@ -177,7 +185,10 @@ def link_tracks(cands: list[tuple], total_frames: int, stride: int = 1) -> pd.Da
         used = set()
         for tr in active:
             lf, lx, ly = tr["pts"][-1]
-            best_j, best_d = -1, MAX_JUMP_PX * (f - lf)
+            # the allowed jump grows with the time since the last detection but is
+            # capped: after a few missed frames it used to reach 120 px x 8 = 960 px,
+            # linking an unrelated blob across the frame into the track
+            best_j, best_d = -1, MAX_JUMP_PX * min(f - lf, 2 * stride)
             for j, (x, y) in enumerate(pts):
                 if j in used:
                     continue
@@ -208,6 +219,23 @@ def link_tracks(cands: list[tuple], total_frames: int, stride: int = 1) -> pd.Da
     return pd.DataFrame(rows, columns=["frame", "x", "y", "seg"])
 
 
+def validate_segments(ball: pd.DataFrame) -> pd.DataFrame:
+    """Keep only the segments that behave like a ball: bounded duration, real
+    displacement, real speed (see the MAX_/MIN_SEGMENT_ constants)."""
+    if ball.empty:
+        return ball
+    keep = []
+    for seg, g in ball.groupby("seg"):
+        g = g.sort_values("frame")
+        span = int(g["frame"].iloc[-1] - g["frame"].iloc[0])
+        net = float(np.hypot(g["x"].iloc[-1] - g["x"].iloc[0], g["y"].iloc[-1] - g["y"].iloc[0]))
+        path = float(np.hypot(np.diff(g["x"]), np.diff(g["y"])).sum())
+        if (span <= MAX_SEGMENT_FRAMES and net >= MIN_SEGMENT_NET_PX
+                and path / max(span, 1) >= MIN_SEGMENT_SPEED_PX):
+            keep.append(seg)
+    return ball[ball["seg"].isin(keep)].reset_index(drop=True)
+
+
 def detect_bounces(ball: pd.DataFrame, fps: float) -> pd.DataFrame:
     """Bounce = local maximum of screen-y (ball lowest on screen) inside a segment.
 
@@ -232,17 +260,23 @@ def detect_bounces(ball: pd.DataFrame, fps: float) -> pd.DataFrame:
 def build_ball_track(cands: list[tuple], total_frames: int, out_parquet: Path,
                      stride: int = 1) -> tuple[pd.DataFrame, dict]:
     """Link candidates (from BallDetector or detect_candidates) into ball.parquet."""
-    ball = link_tracks(cands, total_frames, stride=stride)
+    raw = link_tracks(cands, total_frames, stride=stride)
+    ball = validate_segments(raw)
     ball.to_parquet(out_parquet, index=False)
     sampled = max(1, total_frames // stride)
     coverage = round(float(ball["frame"].nunique()) / sampled, 3) if len(ball) else 0.0
     stats = {"coverage": coverage, "segments": int(ball["seg"].nunique()) if len(ball) else 0,
+             "raw_segments": int(raw["seg"].nunique()) if len(raw) else 0,
              "frames": total_frames, "stride": stride}
     return ball, stats
 
 
 def run_ball_tracking(video: Path, tracks: pd.DataFrame, out_parquet: Path,
-                      fps: float) -> tuple[pd.DataFrame, dict]:
-    """Standalone decode + link (tests / ad-hoc); pipeline uses the integrated path."""
-    cands, total = detect_candidates(video, tracks)
-    return build_ball_track(cands, total, out_parquet)
+                      fps: float, stride: int = 1) -> tuple[pd.DataFrame, dict]:
+    """Standalone decode + link: legacy sessions with tracks but no ball.parquet, and
+    tests. The pipeline's own path is the integrated one. `stride` must match the
+    tracking stride so candidates, player boxes and coverage all use the same frames
+    (this used to decode every frame, then divide by the strided frame count, so
+    coverage could exceed 100%)."""
+    cands, total = detect_candidates(video, tracks, stride=stride)
+    return build_ball_track(cands, total, out_parquet, stride=stride)

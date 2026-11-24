@@ -206,7 +206,7 @@ def analyze(sdir: Path) -> None:
     """
     import time
 
-    from ball import build_ball_track, run_ball_tracking
+    from ball import build_ball_track, run_ball_tracking, validate_segments
     from tracking import TRACK_STRIDE
 
     try:
@@ -234,15 +234,19 @@ def analyze(sdir: Path) -> None:
         if tracks_pq.exists():
             tracks = pd.read_parquet(tracks_pq)  # recalibration: reuse detection
             if ball_pq.exists():
-                ball = pd.read_parquet(ball_pq)
+                raw_ball = pd.read_parquet(ball_pq)
+                # validate on load too: sessions analysed before validation existed
+                # still hold every junk segment in their parquet
+                ball = validate_segments(raw_ball)
                 sampled = max(1, total_frames // TRACK_STRIDE)
                 ball_stats = {"coverage": round(float(ball["frame"].nunique()) / sampled, 3)
                               if len(ball) else 0.0,
                               "segments": int(ball["seg"].nunique()) if len(ball) else 0,
+                              "raw_segments": int(raw_ball["seg"].nunique()) if len(raw_ball) else 0,
                               "frames": total_frames, "stride": TRACK_STRIDE}
             else:
                 ball, ball_stats = run_ball_tracking(sdir / "video.mp4", tracks,
-                                                     ball_pq, FPS)
+                                                     ball_pq, FPS, stride=TRACK_STRIDE)
         else:
             from ball import BallDetector, CutDetector
             balldet = BallDetector()

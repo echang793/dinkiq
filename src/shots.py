@@ -16,6 +16,13 @@ from court import (BOUNCE_LOOKUP_WINDOW_S, COURT_L, COURT_W, NET_Y, court_px_wid
 from events import PLAYER_HEIGHT_FT
 
 MIN_COVERAGE = 0.15    # below this, ball track too sparse to classify anything
+# Frame-level coverage can't tell a ball from a busy background (the sample read 96% from
+# 5,579 segments). What matters is whether a real track exists right AFTER the hits, so the
+# track must show up after hits clearly more often than at random moments of the video.
+MIN_HITS_FOR_PRESENCE = 5      # fewer hits can't establish a rate
+HIT_LIFT_MIN = 1.5             # P(track after a hit) / P(track at a random time)
+HIT_RATE_MIN = 0.25            # ...and the track must follow at least this share of hits
+CHANCE_SAMPLES = 300
 HIT_WINDOW_S = 0.30    # ball samples considered "around" a hit
 # screen-speed thresholds as fraction of court pixel width per second
 DRIVE_SPEED = 1.8
@@ -47,14 +54,31 @@ def mph_from_norm(speed_norm: float | None) -> float | None:
 
 
 def ball_speed_at(ball: pd.DataFrame, t: float, fps: float) -> float | None:
-    """Median ball screen-speed (px/s) in the window just after time t."""
+    """Median ball screen-speed (px/s) in the window just after time t, from ONE
+    segment (the one with the most points there). Pooling every segment and
+    differencing consecutive rows mixed unrelated blobs: points from different
+    objects in the same frame produced huge, meaningless jumps."""
     f0, f1 = int(t * fps), int((t + HIT_WINDOW_S) * fps)
-    w = ball[(ball["frame"] >= f0) & (ball["frame"] <= f1)].sort_values("frame")
+    w = ball[(ball["frame"] >= f0) & (ball["frame"] <= f1)]
+    if "seg" in w and len(w):
+        w = w[w["seg"] == w.groupby("seg").size().idxmax()]
+    w = w.sort_values("frame")
     if len(w) < 3:
         return None
     d = np.hypot(np.diff(w["x"]), np.diff(w["y"]))
     dt = np.clip(np.diff(w["frame"]) / fps, 1e-3, None)
     return float(np.median(d / dt))
+
+
+def ball_presence(ball: pd.DataFrame, hit_times: np.ndarray, duration_s: float, fps: float) -> dict:
+    """How often a usable ball segment (>= 3 points in the 0.3 s after) follows a hit,
+    versus at random moments of the video (seeded: same input, same answer)."""
+    hit_rate = (float(np.mean([ball_speed_at(ball, float(t), fps) is not None for t in hit_times]))
+                if len(hit_times) else 0.0)
+    rand = np.random.default_rng(0).uniform(0.0, max(duration_s, 1.0), CHANCE_SAMPLES)
+    chance = float(np.mean([ball_speed_at(ball, float(t), fps) is not None for t in rand]))
+    return {"hit_rate": round(hit_rate, 3), "chance_rate": round(chance, 3),
+            "lift": round(hit_rate / max(chance, 1.0 / CHANCE_SAMPLES), 2)}
 
 
 def classify_shot(speed_norm: float | None, subject_net_dist: float | None) -> str:
@@ -223,6 +247,17 @@ def shot_report(hit_times: np.ndarray, subject_hits: np.ndarray, ball: pd.DataFr
         return {"available": False,
                 "reason": f"ball track coverage {ball_stats.get('coverage', 0):.0%} "
                           f"below {MIN_COVERAGE:.0%} — pose/audio metrics only",
+                "ball": ball_stats}
+
+    presence = ball_presence(ball, hit_times, ball_stats.get("frames", 0) / fps, fps)
+    ball_stats = {**ball_stats, "hit_ball_rate": presence["hit_rate"],
+                  "chance_ball_rate": presence["chance_rate"], "hit_ball_lift": presence["lift"]}
+    if (len(hit_times) >= MIN_HITS_FOR_PRESENCE
+            and (presence["lift"] < HIT_LIFT_MIN or presence["hit_rate"] < HIT_RATE_MIN)):
+        return {"available": False,
+                "reason": f"a ball track follows only {presence['hit_rate']:.0%} of hits vs "
+                          f"{presence['chance_rate']:.0%} of random moments — it can't be told from a "
+                          "busy background, so ball metrics (speed, serve depth, in/out) are withheld",
                 "ball": ball_stats}
 
     width_px = court_px_width(corners_px)
