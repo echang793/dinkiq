@@ -76,7 +76,7 @@ Newest first. Optional filters: `label`, `opponent` (case-insensitive substrings
 The last four appear only when `stage == "done"`; `queue_position` appears while queued.
 
 ### `GET /session/{sid}`
-Status fields + `meta` + whichever of `metrics`, `events`, `shots`, `points`, `dupr` exist
+Status fields + `meta` + whichever of `metrics`, `events`, `hits`, `shots`, `points`, `dupr` exist
 (an unreadable artifact is simply omitted). While processing: `progress` (0–1 in stage),
 `overall` (0–1), `eta_seconds`; `queue_position` while queued.
 
@@ -88,6 +88,9 @@ Status fields + `meta` + whichever of `metrics`, `events`, `shots`, `points`, `d
 - `events`: `rally_count`, `total_hits`, `subject_shots`, `avg_rally_hits`, `max_rally_hits`,
   `avg_rally_seconds`, `play_time_pct`, `rallies[{start,end,hits,duration}]` (seconds),
   `swing_count`, `partner_swing_count`, `opponent_swing_count`, track ids as above.
+- `hits`: one row per corroborated paddle hit, `[{t, hitter, rally, n}]` — `hitter` ∈ `subject`|
+  `partner`|`opponent1`|`opponent2`|`unknown`, `rally` the index into `events.rallies` (null for an
+  isolated hit: a serve fault, ace or unreturned serve), `n` its 0-based position in that rally.
 - `shots`: `available` (false → `reason`), `ball{coverage,segments,frames,stride}`,
   `shots[{t,type,mph?,swing_mph?,x,y}]` (type: drive|dink|drop|medium|unknown), `shot_mix{}`,
   `avg_shot_mph`, `top_shot_mph`, `top_shot_t`, `avg_swing_mph`, `serves_measured`,

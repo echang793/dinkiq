@@ -211,7 +211,7 @@ def session(sid: str):
     resp["meta"] = load_json(meta_f)
     for key, fname in (("metrics", "metrics.json"), ("events", "events.json"),
                        ("shots", "shots.json"), ("points", "points.json"),
-                       ("dupr", "dupr.json")):
+                       ("dupr", "dupr.json"), ("hits", "hits.json")):
         data = load_json(sdir / fname, default=_ABSENT)
         if data is not _ABSENT:  # missing or unreadable: omit, same as "stage hasn't run"
             resp[key] = data

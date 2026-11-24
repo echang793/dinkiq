@@ -212,6 +212,25 @@ def corroborate_hits(hit_times: np.ndarray,
     return hit_times[ok]
 
 
+def hits_table(hit_times: np.ndarray, hitters: list[str], rallies: list[dict]) -> list[dict]:
+    """One row per corroborated hit: {t, hitter, rally, n} -- who hit it, which rally
+    it belongs to (index into `rallies`, None for an isolated hit) and its 0-based
+    position within that rally. Isolated hits are kept: they are serve faults, aces
+    and unreturned serves, which the rally list (>= 2 hits) leaves out."""
+    rows = []
+    seen_in_rally: dict[int, int] = {}
+    for t, who in zip(hit_times, hitters):
+        t = float(t)
+        ri = next((i for i, r in enumerate(rallies)
+                   if r["start"] - 1e-6 <= t <= r["end"] + 1e-6), None)
+        n = None
+        if ri is not None:
+            n = seen_in_rally.get(ri, 0)
+            seen_in_rally[ri] = n + 1
+        rows.append({"t": round(t, 3), "hitter": who, "rally": ri, "n": n})
+    return rows
+
+
 def rally_metrics(rallies: list[dict], hit_times: np.ndarray,
                   subject_hits: np.ndarray, video_duration: float) -> dict:
     if not rallies:

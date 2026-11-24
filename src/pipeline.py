@@ -57,7 +57,7 @@ def session_dir(sid: str) -> Path:
 # artifacts derived from calibration/analysis; tracks.parquet and ball.parquet
 # are pixel-space (calibration-independent) and deliberately survive so
 # recalibration takes seconds instead of re-running detection
-DERIVED = ["positions.parquet", "metrics.json", "events.json", "shots.json",
+DERIVED = ["positions.parquet", "metrics.json", "events.json", "hits.json", "shots.json",
            "points.json", "dupr.json"]
 
 

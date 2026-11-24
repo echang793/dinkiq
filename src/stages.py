@@ -10,7 +10,7 @@ import pandas as pd
 import media
 import notify
 from court import NET_Y, CourtCalibration
-from events import (corroborate_hits, detect_hits, detect_swings,
+from events import (corroborate_hits, detect_hits, detect_swings, hits_table,
                     rally_metrics, segment_rallies, wrist_speed)
 from jsonio import atomic_write_json, load_json
 from metrics import compute_metrics
@@ -96,6 +96,7 @@ def events(sdir: Path, tracks: pd.DataFrame, subject: int, partner: int | None,
     ev["opponent_track_id"] = opponents[0] if opponents else None  # back-compat scalar
     ev["opponent_swing_count"] = int(len(player_swings.get("opponent1", [])))
     atomic_write_json(sdir / "events.json", ev)
+    atomic_write_json(sdir / "hits.json", hits_table(hit_times, hitters, rallies))
 
     clips = sdir / "clips"
     clips.mkdir(exist_ok=True)
