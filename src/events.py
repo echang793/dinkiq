@@ -30,13 +30,68 @@ MAX_STEP_S = 0.2            # samples further apart than this are not "consecuti
 BAND_LO_HZ = 1200      # paddle pop concentrates 1-6 kHz; speech fundamentals,
 BAND_HI_HZ = 6000      # court rumble and music bass live outside this band
 ATTACK_RATIO = 2.5     # post/pre RMS ratio a true transient must exceed
+HOP = 512              # onset-envelope hop (samples)
+# Onset strength is judged against the recording's OWN background, not its loudest
+# sound: z = (strength - median) / (1.4826 * MAD) is "robust sigmas above the usual
+# background". The old threshold (35% of the session maximum) missed a quiet hit next
+# to a loud one and was blocked by any loud steady sound. Scanned against synthetic
+# audio, a broadcast-like mix and the real sample (hits found: 296 / 216 / 119 / 53 / 20
+# for Z_MIN 5 / 6 / 8 / 10 / 12; the old detector found 71): lower finds more faint pops
+# but on real broadcast audio becomes crowd and commentary, higher misses real ones.
+# 10 sits just above where noise-only audio peaks (z~9-10). One clip's worth of
+# evidence -- tune here; a quiet, near-court phone recording separates far more easily.
+Z_MIN = 10.0
+Z_SURE = 25.0          # so far above background that the RMS attack gate isn't needed
+REFINE_BEFORE_S, REFINE_AFTER_S = 0.08, 0.04   # window searched for the pop itself
+REFINE_RMS_S = 0.003
+
+
+def _robust_z(env: np.ndarray) -> np.ndarray:
+    med = float(np.median(env))
+    mad = float(np.median(np.abs(env - med)))
+    if mad < 1e-9:      # digital silence / synthetic: no background to measure against
+        return np.zeros_like(env)
+    return (env - med) / (1.4826 * mad)
+
+
+def _local_peaks(z: np.ndarray, radius: int = 3) -> list[int]:
+    return [i for i in range(len(z))
+            if z[i] >= Z_MIN and z[i] >= z[max(0, i - radius):i + radius + 1].max()]
+
+
+def _enforce_min_gap(cands: list[int], z: np.ndarray, min_gap_frames: int) -> list[int]:
+    """Two paddle hits can't be closer than MIN_HIT_GAP_S: of any pair that is, keep
+    the stronger (not simply the earlier)."""
+    kept: list[int] = []
+    for i in sorted(cands):
+        if kept and i - kept[-1] < min_gap_frames:
+            if z[i] > z[kept[-1]]:
+                kept[-1] = i
+        else:
+            kept.append(i)
+    return kept
+
+
+def _refine_to_pop(yf: np.ndarray, sr: int, t: float) -> tuple[float, float]:
+    """The onset frame is only accurate to a hop (~23 ms, and lags the pop). Find the
+    energy peak of the pop itself around it. Returns (time, peak RMS)."""
+    lo, hi = max(0, int((t - REFINE_BEFORE_S) * sr)), min(len(yf), int((t + REFINE_AFTER_S) * sr))
+    if hi - lo < 8:
+        return t, 0.0
+    w = max(2, int(REFINE_RMS_S * sr))
+    rms = np.sqrt(np.convolve(yf[lo:hi] ** 2, np.ones(w) / w, mode="same") + 1e-18)
+    k = int(np.argmax(rms))
+    return (lo + k) / sr, float(rms[k])
 
 
 def detect_hits(audio_path, sr_target: int = 22050) -> np.ndarray:
     """Hit times (seconds) from session audio, robust to speech/music/wind.
 
-    Band-pass isolates the paddle-pop band, then a transient gate keeps only
-    onsets with a sharp attack (sustained sounds ramp; pops don't).
+    Band-pass isolates the paddle-pop band; onset strength is scored in robust
+    sigmas above the recording's own background (scale-free: loud and quiet
+    recordings, strong and weak hits alike); the timestamp is refined to the pop
+    itself. Unless the onset is overwhelming (Z_SURE), a transient gate also
+    requires a sharp attack -- sustained sounds ramp, pops don't.
     """
     import librosa  # local import: heavy, and audio may be absent entirely
     from scipy.signal import butter, sosfiltfilt
@@ -46,25 +101,17 @@ def detect_hits(audio_path, sr_target: int = 22050) -> np.ndarray:
         return np.array([])
     sos = butter(4, [BAND_LO_HZ, BAND_HI_HZ], btype="band", fs=sr, output="sos")
     yf = sosfiltfilt(sos, y)
-    onset_env = librosa.onset.onset_strength(y=yf, sr=sr)
-    onsets = librosa.onset.onset_detect(
-        onset_envelope=onset_env, sr=sr, units="time",
-        backtrack=False, delta=0.35, wait=int(MIN_HIT_GAP_S * sr / 512),
-    )
+    env = librosa.onset.onset_strength(y=yf, sr=sr, hop_length=HOP)
+    z = _robust_z(env)
+    frames = _enforce_min_gap(_local_peaks(z), z, int(MIN_HIT_GAP_S * sr / HOP))
     keep = []
-    win = int(0.010 * sr)
-    for t in np.asarray(onsets):
-        i = int(t * sr)
-        # onset timestamps lag the physical pop by up to a hop (~23 ms), so
-        # look for the energy peak in a window straddling t
-        lo, hi = max(0, i - int(0.06 * sr)), min(len(yf), i + int(0.03 * sr))
-        peaks = [np.sqrt(np.mean(yf[j:j + win] ** 2) + 1e-12)
-                 for j in range(lo, hi - win, win // 2)]
-        peak = max(peaks) if peaks else 0.0
+    for f in frames:
+        t_pop, peak = _refine_to_pop(yf, sr, float(librosa.frames_to_time(f, sr=sr, hop_length=HOP)))
+        i = int(t_pop * sr)
         base_seg = yf[max(0, i - int(0.15 * sr)):max(1, i - int(0.05 * sr))]
         base = np.sqrt(np.mean(base_seg ** 2) + 1e-12)
-        if peak / base >= ATTACK_RATIO:
-            keep.append(float(t))
+        if z[f] >= Z_SURE or peak / base >= ATTACK_RATIO:
+            keep.append(float(t_pop))
     return np.asarray(keep)
 
 
