@@ -44,24 +44,3 @@ async function buildRibbon(){
     '<div class="ribsep"><span class="dot"></span></div>').join('');
   t.innerHTML = group + group;
 }
-
-/* ---------------- radar chart ---------------- */
-function radarSVG(dims) {
-  const ds = Object.values(dims || {});
-  if (ds.length < 3) return '';
-  const S = 210, C = S / 2, R = 68;
-  const pt = (i, f) => { const a = -Math.PI / 2 + i * 2 * Math.PI / ds.length; return [C + Math.cos(a) * R * f, C + Math.sin(a) * R * f]; };
-  const ringPts = f => ds.map((_, i) => pt(i, f).map(v => v.toFixed(1)).join(',')).join(' ');
-  const rings = [.33, .66, 1].map((f, ri) => '<polygon class="ring" style="animation-delay:' + (ri * .12) + 's" points="' + ringPts(f) + '"/>').join('');
-  const axes = ds.map((_, i) => { const p = pt(i, 1); return '<line class="axis" x1="' + C + '" y1="' + C + '" x2="' + p[0].toFixed(1) + '" y2="' + p[1].toFixed(1) + '"/>'; }).join('');
-  const val = d => Math.max(.12, Math.min(1, (d.band - DUPR_BAND_MIN) / DUPR_BAND_SPAN));
-  const poly = '<polygon class="poly" points="' + ds.map((d, i) => pt(i, val(d)).map(v => v.toFixed(1)).join(',')).join(' ') + '"/>';
-  const dots = ds.map((d, i) => { const p = pt(i, val(d)); return '<circle class="pt" cx="' + p[0].toFixed(1) + '" cy="' + p[1].toFixed(1) + '" r="3.5" style="animation-delay:' + (.6 + i * .08) + 's"/>'; }).join('');
-  const labels = ds.map((d, i) => {
-    const p = pt(i, 1.22);
-    const anch = Math.abs(p[0] - C) < 10 ? 'middle' : p[0] > C ? 'start' : 'end';
-    return '<text x="' + p[0].toFixed(1) + '" y="' + (p[1] + 3).toFixed(1) + '" text-anchor="' + anch + '">' + esc(d.label.split(' ')[0]) + '</text>';
-  }).join('');
-  const sweep = '<g class="sweep"><line x1="' + C + '" y1="' + C + '" x2="' + C + '" y2="' + (C - R) + '" style="stroke:var(--accent);stroke-width:2"/></g>';
-  return '<svg class="radar" width="' + S + '" height="' + S + '" viewBox="0 0 ' + S + ' ' + S + '">' + rings + axes + sweep + poly + dots + labels + '</svg>';
-}

@@ -59,80 +59,159 @@ async function showResults(s) {
   renderShots(s.shots);
   renderPoints(s.points, s.events);
   renderDupr(s.dupr);
+  updateDq();
 }
 
 /* ---- DUPR reveal ---- */
+const CONF_WORDS = {
+  low:    ['Low confidence', 'A rough guess: too little clean footage to narrow it down.'],
+  medium: ['Medium confidence', 'A reasonable read, but still a few bands wide.'],
+  high:   ['High confidence', 'Enough clean footage for a fairly tight estimate.'],
+};
+function confLevel(d) { return d.confidence_level || (d.confidence < .33 ? 'low' : d.confidence < .66 ? 'medium' : 'high'); }
+const fmtBand = v => v.toFixed(2).replace(/0$/, '');
+
 function renderDupr(d) {
   const body = $('duprBody');
-  if (!d) { body.innerHTML = '<div class="empty" style="margin-top:8px">Skill estimate not computed for this session — hit Re-analyze.</div>'; $('tipBox').innerHTML = '<div class="empty">No tips for this session.</div>'; $('drillBox').style.display = 'none'; return; }
-  if (!d.available) {
-    body.innerHTML = '<div class="caveat" style="margin-top:12px">' + warnSVG + '<span>' + esc(d.reason || 'Not enough signal for a skill estimate.') +
-      (d.caveats || []).map(c => '<br>· ' + esc(c)).join('') + '</span></div>';
-    $('tipBox').innerHTML = '<div class="empty">No tips for this session.</div>';
-    $('drillBox').style.display = 'none';
+  $('dqBody').innerHTML = '';
+  const noTips = '<div class="empty">No tips for this session.</div>';
+  if (!d) {
+    body.innerHTML = '<div class="empty" style="margin-top:8px">Skill estimate not computed for this session — use ⋯ → Re-analyze.</div>';
+    $('tipBox').innerHTML = noTips; $('drillBox').style.display = 'none';
     return;
   }
-  const conf = Math.round(d.confidence * 100);
+  if (!d.available) {
+    body.innerHTML = '<div class="caveat" style="margin-top:12px">' + warnSVG + '<span>' + esc(d.reason || 'Not enough signal for a skill estimate.') + '</span></div>' +
+      '<div class="resemble" style="margin-top:14px">Your movement and rally stats below are still real — only the rating needs more footage.</div>';
+    $('dqBody').innerHTML = (d.caveats || []).map(c => '<div class="caveat">' + warnSVG + '<span>' + esc(c) + '</span></div>').join('');
+    $('tipBox').innerHTML = noTips; $('drillBox').style.display = 'none';
+    return;
+  }
+  const lvl = confLevel(d), [lvlWord, lvlWhy] = CONF_WORDS[lvl];
+  const lo = d.band_low != null ? d.band_low : d.band, hi = d.band_high != null ? d.band_high : d.band;
+  // season high: strictly above every OTHER session (a tie is not a new best)
   let isHigh = false;
-  try { const bs = (window._pcProg || []).filter(p => p.session_id !== sid).map(p => p.dupr_band).filter(v => v != null); isHigh = bs.length > 0 && d.band > Math.max.apply(null, bs); } catch(e){}
-  const R = 26, CIRC = 2 * Math.PI * R;
+  try { const bs = (window._pcProg || []).filter(p => p.session_id !== sid).map(p => p.dupr_band).filter(v => v != null); isHigh = bs.length > 0 && d.band > Math.max.apply(null, bs); } catch (e) {}
+  const dims = Object.values(d.dimensions || {});
+  const weakest = dims.length ? dims.reduce((a, b) => b.band < a.band ? b : a) : null;
+  const drill = d.drills && d.drills[0];
+  const known = lastSession && lastSession.meta && lastSession.meta.known_dupr;
+  const pos = v => Math.max(0, Math.min(100, (v - DUPR_BAND_MIN) / DUPR_BAND_SPAN * 100));
+
+  let knownLine = '';
+  if (known != null) {
+    const diff = d.band - known;
+    knownLine = '<div class="knownline">Your known DUPR is <b>' + Number(known).toFixed(2) + '</b> — the estimate is ' +
+      (Math.abs(diff) < .05 ? 'right on it' : Math.abs(diff).toFixed(2) + (diff > 0 ? ' above' : ' below') + ' it') +
+      (known > 5 ? ' <span class="mut">(this tool can only tell apart play up to about 5.0)</span>' : '') + '</div>';
+  }
+  const edge = d.at_ceiling ? 'At or above the top of what this tool can tell apart (about 5.0).'
+    : d.at_floor ? 'At or below the bottom of what this tool can tell apart (about 2.5).' : '';
+
   body.innerHTML =
     '<div class="heroflex">' +
-      '<div class="duprnum" id="duprNum"><small>~</small>2.00</div>' +
-      '<div class="resemble">Your play <b>resembles a ~' + d.band.toFixed(2).replace(/0$/,'') + ' DUPR player</b>. This is a video-based pattern match, not a certified rating.' +
-        '<br><span class="mut" style="font-size:11.5px">DUPR is pickleball\'s standard skill rating, roughly 2.0 (brand new) to 8.0 (pro) — this tool can currently distinguish play up to about a 5.0.</span></div>' +
-      '<div class="scale"><div class="rail"></div>' +
-        [2.5,3.0,3.5,4.0,4.5,5.0].map(t => '<span class="tick" style="left:' + ((t-DUPR_BAND_MIN)/DUPR_BAND_SPAN*100) + '%">' + t.toFixed(1) + '</span>').join('') +
+      '<div class="duprnum" id="duprNum"><small>~</small>' + fmtBand(d.band) + '</div>' +
+      '<div class="rngline"><span>Likely range <b>' + fmtBand(lo) + ' – ' + fmtBand(hi) + '</b></span>' +
+        '<span class="conflvl ' + lvl + '">' + lvlWord + '</span>' +
+        (lvl !== 'high' ? '<button class="linkbtn" onclick="openDq()">Why?</button>' : '') + '</div>' +
+      (drill
+            ? '<div class="worknext"><div class="wk">Work on next</div>' +
+                '<div class="wt">' + esc(drill.target_label || (weakest && weakest.label) || drill.name) + '</div>' +
+                '<div class="wd"><b>' + esc(drill.name) + '</b> · ' + esc(drill.reps) + '<br>' + esc(drill.description) + '</div></div>'
+            : '') +
+      '<div class="resemble">Your play <b>resembles a ~' + fmtBand(d.band) + ' DUPR player</b>. ' + lvlWhy + ' This is a video pattern match, not a certified rating' +
+        (d.calibrated ? '.' : ' — and it is <b>uncalibrated</b> (not yet checked against your known ratings).') + (edge ? ' ' + edge : '') + '</div>' +
+      knownLine +
+      '<div class="scale" role="img" aria-label="Estimate ' + fmtBand(d.band) + ' on a scale from 2.5 to 5.0, likely range ' + fmtBand(lo) + ' to ' + fmtBand(hi) + '"><div class="rail"></div>' +
+        '<div class="rng" style="left:' + pos(lo) + '%;width:' + Math.max(1.5, pos(hi) - pos(lo)) + '%"></div>' +
+        [2.5,3.0,3.5,4.0,4.5,5.0].map(t => '<span class="tick" style="left:' + pos(t) + '%">' + t.toFixed(1) + '</span>').join('') +
         '<div class="mk" id="duprMk"></div></div>' +
-      '<div class="conf"><svg width="62" height="62" viewBox="0 0 62 62">' +
-        '<circle cx="31" cy="31" r="' + R + '" fill="none" style="stroke:var(--panel2)" stroke-width="6"/>' +
-        '<circle id="confRing" cx="31" cy="31" r="' + R + '" fill="none" stroke-width="6" stroke-linecap="round" transform="rotate(-90 31 31)" stroke-dasharray="' + CIRC + '" stroke-dashoffset="' + CIRC + '" style="stroke:var(--accent);transition:stroke-dashoffset 1.4s cubic-bezier(.22,1,.36,1) .5s"/>' +
-        '<text x="31" y="36" text-anchor="middle" font-size="13" font-family="Archivo Black, sans-serif" style="fill:var(--ink)">' + conf + '</text></svg>' +
-      '<div><div class="cv">' + conf + '% confidence</div><div class="cl">How sure the model is, given<br>footage quality &amp; sample size</div></div></div>' +
       (isHigh ? '<span class="pbbug">▲ SEASON HIGH — BEST ON RECORD</span>' : '') +
     '</div>' +
-    '<div style="display:flex;gap:26px;align-items:center;flex-wrap:wrap;margin-top:22px">' + radarSVG(d.dimensions) +
-    '<div class="bars" id="duprDims" style="flex:1;min-width:250px">' +
-      Object.values(d.dimensions || {}).sort((a,b) => a.band - b.band).map(dim => {
+    '<div class="bars" id="duprDims" style="margin-top:22px">' +
+      dims.slice().sort((a, b) => a.band - b.band).map(dim => {
         const pct = Math.max(4, Math.min(100, 100 * (dim.band - DUPR_BAND_MIN) / DUPR_BAND_SPAN));
-        const col = dim.band < d.band - .25 ? 'var(--amber)' : 'var(--accent)';
+        const weak = dim.band < d.band - .25;
         const target = dim.next_target_value != null
-          ? '<div class="mut" style="font-size:10px;margin-top:1px">reach ' + dim.next_target_value + (dim.unit || '') +
+          ? '<div class="mut" style="font-size:11px;margin-top:1px">reach ' + dim.next_target_value + (dim.unit || '') +
             ' for the next tier (' + dim.next_target_band.toFixed(2) + ')</div>' : '';
-        return '<div class="bar"><span class="lb">' + esc(dim.label) + target + '</span>' +
-          '<div class="track"><div class="fill" data-w="' + pct + '%" style="background:' + col + '"></div></div>' +
+        return '<div class="bar"><span class="lb">' + esc(dim.label) + (weak ? '<span class="weaktag">▼ below your level</span>' : '') + target + '</span>' +
+          '<div class="track"><div class="fill" data-w="' + pct + '%" style="background:' + (weak ? 'var(--amber)' : 'var(--accent)') + '"></div></div>' +
           '<span class="val">' + dim.band.toFixed(1) + '</span></div>';
-      }).join('') + '</div></div>' +
-    (d.caveats && d.caveats.length ? d.caveats.map(c => '<div class="caveat">' + warnSVG + '<span>' + esc(c) + '</span></div>').join('') : '');
-  // the reveal: count up + marker slide + ring draw
-  const numEl = $('duprNum'), t0 = performance.now(), DUR = 1700, from = DUPR_BAND_MIN, to = d.band;
-  const ease = t => 1 - Math.pow(1 - t, 3);
-  (function stepFn(now) {
-    const t = Math.min(1, (now - t0) / DUR);
-    const v = from + (to - from) * ease(t);
-    numEl.innerHTML = '<small>~</small>' + v.toFixed(2);
-    if (t < 1) requestAnimationFrame(stepFn);
-    else { numEl.style.transition = 'transform .3s cubic-bezier(.34,1.56,.64,1)'; numEl.style.transform = 'scale(1.06)'; setTimeout(() => { numEl.style.transform = ''; }, 300); }
-  })(t0);
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    $('duprMk').style.left = ((to - DUPR_BAND_MIN) / DUPR_BAND_SPAN * 100) + '%';
-    $('confRing').style.strokeDashoffset = CIRC * (1 - d.confidence);
-  }));
+      }).join('') + '</div>';
+  $('dqBody').innerHTML = (d.caveats || []).map(c => '<div class="caveat">' + warnSVG + '<span>' + esc(c) + '</span></div>').join('');
+
+  // the reveal: count up + marker slide
+  const numEl = $('duprNum'), to = d.band;
+  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches || matchMedia('(pointer:coarse)').matches;
+  if (!reduce) {
+    const t0 = performance.now(), DUR = 1200, from = DUPR_BAND_MIN;
+    const ease = t => 1 - Math.pow(1 - t, 3);
+    (function stepFn(now) {
+      const t = Math.min(1, (now - t0) / DUR);
+      numEl.innerHTML = '<small>~</small>' + (from + (to - from) * ease(t)).toFixed(2);
+      if (t < 1) requestAnimationFrame(stepFn); else numEl.innerHTML = '<small>~</small>' + fmtBand(to);
+    })(t0);
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => { $('duprMk').style.left = pos(to) + '%'; }));
   if (isHigh) setTimeout(celebrate, 900);
   animateBars($('duprDims'));
   $('tipBox').innerHTML = (d.tips && d.tips.length)
     ? d.tips.map(t => '<div class="coach">' + tipSVG + '<span>' + esc(t) + '</span></div>').join('')
-    : '<div class="empty">No tips for this session.</div>';
-  const drillEl = $('drillBox');
-  if (d.drills && d.drills.length) {
+    : noTips;
+  const more = (d.drills || []).slice(1), drillEl = $('drillBox');
+  if (more.length) {
     drillEl.style.display = 'block';
-    drillEl.innerHTML = d.drills.map(dr =>
+    drillEl.innerHTML = '<div class="heatnote" style="margin-bottom:8px">More drills</div>' + more.map(dr =>
       '<div class="caveat" style="border-color:var(--accentline,var(--line2));margin-bottom:8px">' +
         '<div><b>Drill: ' + esc(dr.name) + '</b> <span class="mut">(' + esc(dr.reps) + ' — targets ' + esc(dr.target_label) + ')</span>' +
         '<div style="margin-top:6px">' + esc(dr.description) + '</div></div></div>').join('');
   } else {
     drillEl.style.display = 'none';
   }
+}
+function updateDq() {
+  const n = $('metricWarn').children.length + $('dqBody').children.length;
+  $('dqCount').textContent = n ? '· ' + n + (n === 1 ? ' note' : ' notes') : '· nothing flagged';
+}
+function openDq() { const el = $('dqCard'); el.open = true; el.scrollIntoView({behavior: 'smooth', block: 'center'}); }
+
+/* ---- header actions ---- */
+function toggleRMenu(e) {
+  e.stopPropagation();
+  const m = $('rMenu'), open = m.hidden;
+  m.hidden = !open;
+  $('rMoreBtn').setAttribute('aria-expanded', String(open));
+  if (open) m.querySelector('button').focus();
+}
+function closeRMenu() { const m = $('rMenu'); if (m && !m.hidden) { m.hidden = true; $('rMoreBtn').setAttribute('aria-expanded', 'false'); } }
+document.addEventListener('click', closeRMenu);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeRMenu(); $('rMoreBtn') && $('rMoreBtn').focus(); } });
+
+// One primary Share: the native share sheet with the stat-card image when the device
+// supports it (phones do), otherwise just open the image.
+async function shareResult() {
+  if (DEMO) { toast('Sharing needs the live backend'); return; }
+  const url = BASE + '/api/session/' + sid + '/card.png';
+  try {
+    const blob = await (await fetch(url)).blob();
+    const file = new File([blob], 'dinkiq.png', {type: 'image/png'});
+    if (navigator.canShare && navigator.canShare({files: [file]})) {
+      await navigator.share({files: [file], title: 'My DinkIQ session'});
+      return;
+    }
+  } catch (e) { if (e && e.name === 'AbortError') return; }
+  downloadStatCard();
+}
+function identityOk() {
+  try { localStorage.setItem('pc_idok_' + sid, '1'); } catch (e) {}
+  markIdentityConfirmed();
+}
+function markIdentityConfirmed() {
+  let ok = false; try { ok = !!localStorage.getItem('pc_idok_' + sid); } catch (e) {}
+  $('idRow').style.display = ok ? 'none' : 'flex';
+  const h = $('subjMarkerCard').querySelector('h2');
+  if (h) h.textContent = ok ? 'You confirmed this player' : 'Was this you?';
 }
 
 function celebrate() {

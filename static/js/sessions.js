@@ -5,7 +5,7 @@ async function loadSessions() {
   try { list = await api('/sessions'); } catch (e) { return; }
   window._pcSessions = list;
   disarmDelete();
-  if (!list.length) { $('sessList').innerHTML = '<div class="empty">No sessions yet — upload your first match above.</div>'; loadCoverage(list); return; }
+  if (!list.length) { $('sessList').innerHTML = '<div class="empty">No sessions yet — upload your first match above.</div>'; return; }
   $('sessList').innerHTML = list.map((s, i) => {
     const running = s.state === 'running' || s.state === 'queued';
     const pillCls = s.state === 'done' && s.stage === 'done' ? 'done' : s.state === 'error' ? 'error' : running ? 'running' : '';
@@ -19,7 +19,6 @@ async function loadSessions() {
       '</div>' +
       '<span class="pill ' + pillCls + '">' + esc(pillTxt) + '</span></div>';
   }).join('');
-  loadCoverage(list);
   if (window._pcProg) decorateSparks(window._pcProg);
 }
 function decorateSparks(pts) {
@@ -40,21 +39,6 @@ function decorateSparks(pts) {
     if (pill) row.insertBefore(svg, pill);
   });
 }
-let covSid = null;
-async function loadCoverage(list) {
-  const cv = $('covCanvas'), em = $('covWrap') && $('covWrap').querySelector('.empty');
-  const doneRow = (list || []).find(s => s.state === 'done' && s.stage === 'done');
-  if (!doneRow || !cv) { if (cv) cv.style.display = 'none'; if (em) em.style.display = 'block'; covSid = null; return; }
-  try {
-    const s = await api('/session/' + doneRow.session_id);
-    if (s && s.metrics && s.metrics.heatmap && $('home').classList.contains('on')) {
-      covSid = doneRow.session_id;
-      if (em) em.style.display = 'none';
-      drawHeatmap(s.metrics, true, 'covCanvas');
-    }
-  } catch(e){}
-}
-function openCoverage(){ if (covSid) openSession(covSid); }
 // local calendar date: toISOString() is UTC, so an evening session was labelled tomorrow
 function fmtDate(ts){ if (!ts) return ''; const d = new Date(ts * 1000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 // Home and the Sessions page both render checkboxes; only the ones on screen count

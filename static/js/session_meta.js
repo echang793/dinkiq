@@ -8,6 +8,7 @@ async function loadSubjectMarker(id) {
   const opponents = data && data.opponents && data.opponents.length ? data.opponents : (data && data.opponent ? [data.opponent] : []);
   if (!data || (!data.subject && !data.partner && !opponents.length)) { card.style.display = 'none'; return; }
   card.style.display = 'flex';
+  markIdentityConfirmed();
   const img = new Image();
   img.onload = () => drawSubjectMarker(img, data, opponents);
   img.src = frameURL();

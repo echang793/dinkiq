@@ -19,7 +19,6 @@
     <span class="bug">DI</span>
     <b>DINK<i>IQ</i></b>
   </div>
-  <span class="livechip"><i class="reddot"></i>LIVE ANALYSIS</span>
   <div class="sp"></div>
   <div class="navlist">
     <span class="here" id="navFilm" onclick="goHome()" tabindex="0" role="button">Film Room</span>
@@ -83,16 +82,6 @@
           </div>
           <div id="trendWrap" style="margin-top:14px"><div class="empty">Complete a session to start your trend line.</div></div>
         </div>
-        <div class="card" id="covCard" style="cursor:pointer" onclick="openCoverage()" tabindex="0" role="button">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <h2 style="margin:0">Latest court coverage</h2>
-            <span class="link">Full breakdown →</span>
-          </div>
-          <div id="covWrap" style="margin-top:14px;display:grid;place-items:center">
-            <div class="empty">Complete a session to see your coverage map.</div>
-            <canvas id="covCanvas" style="width:100%;max-width:260px;display:none"></canvas>
-          </div>
-        </div>
       </div>
     </div>
   </section>
@@ -141,12 +130,18 @@
   <section class="screen" id="results">
     <div class="rhead">
       <span class="back" onclick="goHome()" style="margin:0" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
-      <div style="display:flex;flex-wrap:wrap;gap:9px">
-        <button class="ghost sm" onclick="downloadReport()">Download report (PDF)</button>
-        <button class="ghost sm" onclick="downloadHighlights()">Download highlights</button>
-        <button class="ghost sm" onclick="downloadStatCard()">Share stat card</button>
-        <button class="ghost sm" onclick="startCalib(lastSession && lastSession.meta && lastSession.meta.match_type)">Recalibrate</button>
-        <button class="ghost sm" onclick="reanalyze()">Re-analyze</button>
+      <div class="rtools">
+        <button class="sm" onclick="shareResult()">Share</button>
+        <div class="rmore">
+          <button class="ghost sm" id="rMoreBtn" aria-haspopup="menu" aria-expanded="false" aria-controls="rMenu" onclick="toggleRMenu(event)" aria-label="More actions">⋯</button>
+          <div class="rmenu" id="rMenu" role="menu" hidden>
+            <button class="ghost" role="menuitem" onclick="downloadStatCard()">Stat card (image)</button>
+            <button class="ghost" role="menuitem" onclick="downloadReport()">Report (PDF)</button>
+            <button class="ghost" role="menuitem" onclick="downloadHighlights()">Highlight reel</button>
+            <button class="ghost" role="menuitem" onclick="startCalib(lastSession && lastSession.meta && lastSession.meta.match_type)">Recalibrate</button>
+            <button class="ghost" role="menuitem" onclick="reanalyze()">Re-analyze</button>
+          </div>
+        </div>
       </div>
     </div>
     <div class="herowrap">
@@ -154,24 +149,85 @@
         <div class="k">Skill estimate</div>
         <div id="duprBody"></div>
       </div>
-      <div class="figcard">
-        <h2><span class="num">Fig.&nbsp;1</span> Court coverage</h2>
-        <div class="figwrap"><canvas id="heatCanvas"></canvas></div>
-        <div class="heatnote">where you stood · 2 ft cells · brighter = more time</div>
-      </div>
       <div class="figcard" id="subjMarkerCard" style="display:none">
-        <h2><span class="num">Fig.&nbsp;2</span> Player identification</h2>
-        <div class="figwrap"><canvas id="subjCanvas"></canvas></div>
+        <h2>Was this you?</h2>
+        <div class="figwrap"><canvas id="subjCanvas" role="img" aria-label="Frame showing which player was tracked as you"></canvas></div>
         <div class="heatnote" id="subjNote">solid = YOU · dashed = opponent</div>
+        <div class="idrow" id="idRow">
+          <button class="sm" onclick="identityOk()">Yes, that's me</button>
+          <button class="ghost sm" onclick="startCalib(lastSession && lastSession.meta && lastSession.meta.match_type)">Not me — pick again</button>
+        </div>
       </div>
-      <div class="figcard" id="ballTrajCard" style="display:none">
+    </div>
+    <div class="card">
+      <h2>Shots</h2>
+      <div class="grid" id="shotStats"></div>
+      <div class="bars" id="shotMix"></div>
+      <div id="shotNote"></div>
+      <div class="herowrap" id="shotVizWrap" style="display:none;margin-top:16px">
+        <div class="figcard">
+          <h2 style="font-size:13px">Shot heatmap by type</h2>
+          <div class="figwrap"><canvas id="shotHeatCanvas"></canvas></div>
+          <div class="heatnote" id="shotHeatLegend"></div>
+        </div>
+        <div class="figcard" id="serveVizCard" style="display:none">
+          <h2 style="font-size:13px">Serve placement</h2>
+          <div class="bars" id="serveMapBars" style="margin-top:8px"></div>
+          <div class="heatnote">left / middle / right thirds, receiver's view</div>
+        </div>
+      </div>
+          <div class="figcard" id="ballTrajCard" style="display:none;margin-top:16px">
         <h2><span class="num">Fig.&nbsp;3</span> Ball trajectory</h2>
-        <div class="figwrap"><canvas id="ballTrajCanvas"></canvas></div>
+        <div class="figwrap"><canvas id="ballTrajCanvas" role="img" aria-label="Where the ball bounced during the session"></canvas></div>
         <div class="heatnote">every detected bounce this session · brighter = later in the match</div>
       </div>
     </div>
     <div class="card">
-      <h2>Session info</h2>
+      <h2>Rallies</h2>
+      <div class="grid" id="rallyStats"></div>
+      <div id="rallyList" style="margin-top:16px"></div>
+      <video id="rallyVideo" controls playsinline preload="metadata"></video>
+    </div>
+    <div class="card">
+      <h2>Points &amp; outcomes</h2>
+      <div class="grid" id="pointStats"></div>
+      <div class="bars" id="pointBars"></div>
+      <div id="pointNote"></div>
+    </div>
+    <div class="card">
+      <h2>Movement &amp; positioning</h2>
+      <div class="herowrap" style="margin-top:6px">
+        <div class="figcard">
+          <h2><span class="num">Fig.&nbsp;1</span> Court coverage</h2>
+          <div class="figwrap"><canvas id="heatCanvas" role="img" aria-label="Heatmap of where you stood on the court"></canvas></div>
+          <div class="heatnote">where you stood · 2 ft cells · brighter = more time</div>
+        </div>
+        <div><div class="grid" id="stats"></div></div>
+      </div>
+      <div class="bars" id="zones"></div>
+      <div id="curveWrap" style="display:none;margin-top:16px">
+        <div class="heatnote" style="margin-bottom:6px">movement speed over the session — fatigue/momentum curve</div>
+        <div class="figwrap"><canvas id="curveCanvas"></canvas></div>
+      </div>
+    </div>
+    <div class="card" id="synergyCard" style="display:none">
+      <h2>Partner synergy</h2>
+      <div class="grid" id="synergyStats"></div>
+      <div id="synergyNote" class="heatnote" style="margin-top:8px">lower overlap = more court spread between you and your partner</div>
+      <div id="synergyTip" class="coach" style="display:none;margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h2>Coach's notes</h2>
+      <div id="tipBox"><div class="empty">No tips for this session.</div></div>
+      <div id="drillBox" style="display:none;margin-top:14px"></div>
+    </div>
+    <details class="card fold" id="dqCard">
+      <summary><h2>Data quality <span class="dqn" id="dqCount"></span></h2></summary>
+      <div id="metricWarn"></div>
+      <div id="dqBody"></div>
+    </details>
+    <details class="card fold" id="metaCard">
+      <summary><h2>Session info &amp; notes</h2></summary>
       <div class="metafields">
         <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" maxlength="120" style="width:220px"></div>
         <div class="fld"><label>Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" maxlength="80" style="width:160px"></div>
@@ -196,58 +252,7 @@
         <span class="mut" style="font-size:12px">wrong or corrupt upload? swap the file without losing this session's notes</span>
       </div>
       <div id="h2hBox" style="display:none;margin-top:14px"></div>
-    </div>
-    <div class="card">
-      <h2>Movement &amp; positioning</h2>
-      <div id="metricWarn"></div>
-      <div class="grid" id="stats"></div>
-      <div class="bars" id="zones"></div>
-      <div id="curveWrap" style="display:none;margin-top:16px">
-        <div class="heatnote" style="margin-bottom:6px">movement speed over the session — fatigue/momentum curve</div>
-        <div class="figwrap"><canvas id="curveCanvas"></canvas></div>
-      </div>
-    </div>
-    <div class="card" id="synergyCard" style="display:none">
-      <h2>Partner synergy</h2>
-      <div class="grid" id="synergyStats"></div>
-      <div id="synergyNote" class="heatnote" style="margin-top:8px">lower overlap = more court spread between you and your partner</div>
-      <div id="synergyTip" class="coach" style="display:none;margin-top:12px"></div>
-    </div>
-    <div class="card">
-      <h2>Shots</h2>
-      <div class="grid" id="shotStats"></div>
-      <div class="bars" id="shotMix"></div>
-      <div id="shotNote"></div>
-      <div class="herowrap" id="shotVizWrap" style="display:none;margin-top:16px">
-        <div class="figcard">
-          <h2 style="font-size:13px">Shot heatmap by type</h2>
-          <div class="figwrap"><canvas id="shotHeatCanvas"></canvas></div>
-          <div class="heatnote" id="shotHeatLegend"></div>
-        </div>
-        <div class="figcard" id="serveVizCard" style="display:none">
-          <h2 style="font-size:13px">Serve placement</h2>
-          <div class="bars" id="serveMapBars" style="margin-top:8px"></div>
-          <div class="heatnote">left / middle / right thirds, receiver's view</div>
-        </div>
-      </div>
-    </div>
-    <div class="card">
-      <h2>Rallies</h2>
-      <div class="grid" id="rallyStats"></div>
-      <div id="rallyList" style="margin-top:16px"></div>
-      <video id="rallyVideo" controls playsinline preload="metadata"></video>
-    </div>
-    <div class="card">
-      <h2>Points &amp; outcomes</h2>
-      <div class="grid" id="pointStats"></div>
-      <div class="bars" id="pointBars"></div>
-      <div id="pointNote"></div>
-    </div>
-    <div class="card">
-      <h2>Coach's notes</h2>
-      <div id="tipBox"><div class="empty">No tips for this session.</div></div>
-      <div id="drillBox" style="display:none;margin-top:14px"></div>
-    </div>
+        </details>
   </section>
 
   <section class="screen" id="sessions">

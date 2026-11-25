@@ -30,7 +30,6 @@ function attachTilt(el) {
   el.addEventListener('pointerleave', () => { el.style.transform = ''; });
 }
 buildRibbon();
-attachTilt($('covCard'));
 attachTilt(document.querySelector('.figcard'));
 applySkin(localStorage.getItem('pc_skin') || 'night');
 loadSessions(); loadTrend(); loadFocusReminder();
