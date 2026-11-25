@@ -29,8 +29,14 @@ function attachTilt(el) {
   });
   el.addEventListener('pointerleave', () => { el.style.transform = ''; });
 }
-buildRibbon();
+// the ticker is filled by loadHome() on the Home route; only build it here when booting onto another page
+if (location.hash && location.hash !== '#/' && matchMedia('(min-width:701px)').matches) buildRibbon();
 attachTilt(document.querySelector('.figcard'));
 applySkin(localStorage.getItem('pc_skin') || 'night');
 route();
 booted = true;
+
+// installable + an honest offline page. Relative URL so it also works under a path prefix.
+if ('serviceWorker' in navigator && !DEMO) {
+  addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}

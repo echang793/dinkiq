@@ -78,6 +78,15 @@ async function api(p, opt) {
 }
 function frameURL() { return DEMO ? demoFrameURL() : BASE + '/api/session/' + sid + '/frame?ts=' + Date.now(); }
 
+// Size a chart canvas for the screen's pixel density: draw in logical units, get crisp lines on retina.
+function hiDpi(c, w, h) {
+  const d = Math.min(window.devicePixelRatio || 1, 3);
+  c.width = Math.round(w * d); c.height = Math.round(h * d);
+  const ctx = c.getContext('2d');
+  ctx.setTransform(d, 0, 0, d, 0, 0);
+  return ctx;
+}
+
 /* ---------------- settings (stored on this device) ---------------- */
 let prefs = {};
 try { prefs = JSON.parse(localStorage.getItem('pc_prefs')) || {}; } catch (e) { prefs = {}; }
@@ -108,7 +117,7 @@ function saveSettings() {
   prefs.hand = $('setHand').value || '';
   prefs.fx = $('setFx').value === 'auto' ? '' : $('setFx').value;
   savePrefs(); closeSettings(); toast('Settings saved');
-  if (me() !== before) { try { loadSessions(); loadTrend(); loadFocusReminder(); } catch (e) {} }
+  if (me() !== before && $('home').classList.contains('on')) loadHome();
 }
 
 /* ---------------- connection banner ---------------- */
@@ -135,9 +144,7 @@ function setOffline(on) {
     clearInterval(offlineTimer); offlineTimer = null;
     hideBar();
     // the page was loaded against a dead server: refill the lists that came back empty
-    try { loadSessions(); } catch (e) {}
-    try { loadTrend(); } catch (e) {}
-    try { loadFocusReminder(); } catch (e) {}
+    if ($('home').classList.contains('on')) loadHome();
   }
 }
 function probeBackend() { return api('/sessions').then(() => true, () => false); }
@@ -208,7 +215,17 @@ function nav(h) { if (location.hash === h || (h === '#/' && !location.hash)) rou
 function goHome() { nav('#/'); }
 function goSessions() { nav('#/sessions'); }
 function goTrends() { nav('#/trends'); }
-function viewHome() { stopPoll(); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
+// Home needs the session list and the trend series; one request fills the list, the trend card,
+// the focus reminder and (where it is visible) the ticker. Falls back to the individual loaders.
+async function loadHome() {
+  let h;
+  try { h = await api('/home' + playerQS()); }
+  catch (e) { return; }
+  window._pcProg = h.progress;
+  loadSessions(h.sessions); loadTrend(h.progress); loadFocusReminder(h.progress);
+  if (matchMedia('(min-width:701px)').matches) buildRibbon(h.sessions, h.progress);   // the ticker is hidden on phones
+}
+function viewHome() { stopPoll(); show('home'); loadHome(); }
 function viewSessions() { stopPoll(); show('sessions'); loadSessionsPage(); }
 function viewTrends() { stopPoll(); show('trends'); loadTrendsPage(); }
 function route() {

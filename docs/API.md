@@ -189,6 +189,10 @@ are prefixed with `'` so a spreadsheet won't execute them.
 
 ## Trends and comparison
 
+### `GET /home`
+The Home screen in one call: `{sessions: [...], progress: [...]}`, the same payloads as `GET /sessions`
+and `GET /progress` (`?player=` scopes `progress` only).
+
 ### `GET /progress`
 Completed sessions, oldest first. `?player=NAME` keeps only that player's footage (sessions with no
 `player` tag count as theirs; case-insensitive):

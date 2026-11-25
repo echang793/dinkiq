@@ -104,10 +104,9 @@ async function loadStreak() {
 }
 
 /* ---------------- trend ---------------- */
-async function loadFocusReminder() {
+async function loadFocusReminder(pts) {
   const box = $('focusReminder');
-  let pts;
-  try { pts = await api('/progress' + playerQS()); } catch (e) { box.style.display = 'none'; return; }
+  if (!pts) { try { pts = await api('/progress' + playerQS()); } catch (e) { box.style.display = 'none'; return; } }
   const last = pts[pts.length - 1];
   const dims = (last && last.dimensions) || {};
   // 3.5 mirrors feedback.WEAK_BAND -- same cutoff the drills/tips already use,
@@ -123,9 +122,8 @@ async function loadFocusReminder() {
       return '<div class="coach">' + tipSVG + '<span>Work on <b>' + esc(d.label) + '</b>' + target + '</span></div>';
     }).join('');
 }
-async function loadTrend() {
-  let pts;
-  try { pts = await api('/progress' + playerQS()); } catch (e) { return; }
+async function loadTrend(pts) {
+  if (!pts) { try { pts = await api('/progress' + playerQS()); } catch (e) { return; } }
   window._pcProg = pts;
   const w = $('trendWrap');
   if (!pts.length) { w.innerHTML = '<div class="empty">Complete a session to start your trend line.</div>'; return; }

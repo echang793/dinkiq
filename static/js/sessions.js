@@ -1,8 +1,7 @@
 'use strict';
 /* ---------------- sessions list ---------------- */
-async function loadSessions() {
-  let list;
-  try { list = await api('/sessions'); } catch (e) { return; }
+async function loadSessions(list) {
+  if (!list) { try { list = await api('/sessions'); } catch (e) { return; } }
   window._pcSessions = list;
   disarmDelete();
   if (!list.length) { $('sessList').innerHTML = '<div class="empty">No sessions yet — upload your first match above.</div>'; return; }
@@ -10,7 +9,7 @@ async function loadSessions() {
     const running = s.state === 'running' || s.state === 'queued';
     const pillCls = s.state === 'done' && s.stage === 'done' ? 'done' : s.state === 'error' ? 'error' : running ? 'running' : '';
     const pillTxt = s.stage === 'done' ? 'complete' : s.state === 'error' ? 'error' : (STAGE_NAMES[s.stage] || s.stage);
-    return '<div class="sess" data-sid="' + s.session_id + '" style="animation-delay:' + (i * 55) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
+    return '<div class="sess" role="button" tabindex="0" aria-label="Open ' + esc(s.label || s.filename || s.session_id) + '" data-sid="' + s.session_id + '" style="animation-delay:' + (i * 55) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
       '<input type="checkbox" class="cb selBox" value="' + s.session_id + '" onclick="event.stopPropagation(); updateDelBtn()">' +
       '<div class="grow"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div>' +
         '<div class="meta"><span>' + esc(s.played_at || fmtDate(s.uploaded_at)) + '</span>' +
@@ -158,7 +157,8 @@ async function deleteClicked() {
     if (r.errors && r.errors.length) toast('Some deletions failed: ' + r.errors.map(e => e.id + ': ' + e.error).join(', '), true);
     else toast('Deleted ' + (r.deleted ? r.deleted.length : ids.length) + ' session(s)');
   } catch (e) { toast('Delete failed: ' + e, true); }
-  loadSessions(); loadTrend();
+  loadHome();
+  if ($('sessions').classList.contains('on')) loadSessionsPage();   // the list being looked at must drop the deleted rows too
 }
 // A tap on a row/card: remember where it was (for the portal morph), then change the route
 function openSession(id) {
@@ -216,7 +216,7 @@ async function loadSessionsPage() {
     let pillTxt = s.stage === 'done' ? 'complete' : s.state === 'error' ? 'error' : (STAGE_NAMES[s.stage] || s.stage);
     if (s.stage === 'queued' && s.queue_position) pillTxt = 'queued · #' + s.queue_position;
     const band = s.dupr_band != null ? '~' + s.dupr_band : '';
-    return '<div class="strow" style="animation-delay:' + (i * 45) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
+    return '<div class="strow" role="button" tabindex="0" aria-label="Open ' + esc(s.label || s.filename || s.session_id) + '" style="animation-delay:' + (i * 45) + 'ms" onclick="openSession(\'' + s.session_id + '\')">' +
       '<input type="checkbox" class="cb selBox" value="' + s.session_id + '" onclick="event.stopPropagation(); updateDelBtn()">' +
       '<div class="scell"><div class="nm">' + esc(s.label || s.filename || s.session_id) + '</div>' +
         '<div class="sub">' + esc(s.played_at || fmtDate(s.uploaded_at)) + (s.opponent ? ' · vs ' + esc(s.opponent) : '') + (s.known_dupr ? ' · known DUPR ' + s.known_dupr : '') + (s.disk_bytes ? ' · ' + fmtMB(s.disk_bytes) : '') + '</div></div>' +

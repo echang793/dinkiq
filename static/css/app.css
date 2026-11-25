@@ -1,6 +1,11 @@
+/* fonts are self-hosted (latin subset): no third-party request on the critical path, works offline.
+   ?v=1 makes them immutable-cacheable; bump it if a file ever changes. */
+@font-face{font-family:"Archivo";font-style:normal;font-weight:400 900;font-display:swap;src:url(../fonts/archivo.woff2?v=1) format("woff2")}
+@font-face{font-family:"Archivo";font-style:italic;font-weight:400 900;font-display:swap;src:url(../fonts/archivo-italic.woff2?v=1) format("woff2")}
+@font-face{font-family:"Archivo Black";font-style:normal;font-weight:400;font-display:swap;src:url(../fonts/archivo-black.woff2?v=1) format("woff2")}
   :root{
     --bg:#060c1a; --panel:#0d1830; --panel2:#13203a; --line:#1c2c4a; --line2:#2a4066;
-    --ink:#eef3fb; --muted:#8fa3c8; --dim:#5d7494; --faint:#3a4c6d;
+    --ink:#eef3fb; --muted:#8fa3c8; --dim:#7a8da8; --faint:#3a4c6d;
     --accent:#f5c542; --accent2:#ffd970; --accent3:#a8862e; --accentink:#0a1428; --accentwash:rgba(245,197,66,.10);
     --amber:#ffb454; --amberwash:rgba(255,180,84,.12); --amberline:rgba(255,180,84,.35);
     --red:#ff5c5c; --redwash:rgba(255,92,92,.12); --redline:rgba(255,92,92,.35);
@@ -11,7 +16,7 @@
     --ease:cubic-bezier(.22,1,.36,1);
   }
   html[data-skin="champ"]{--bg:#0f0c07;--panel:#181307;--panel2:#221b0c;--line:#2e2513;--line2:#463a1e;--accent:#ffd24d;--accent2:#ffe38a;--accent3:#af8e33;--accentink:#141005;--accentwash:rgba(255,210,77,.10)}
-  html[data-skin="clay"]{--bg:#160b08;--panel:#22110c;--panel2:#2d1811;--line:#3c221a;--line2:#553226;--accent:#ff8a5c;--accent2:#ffab88;--accent3:#b05e3d;--accentink:#1c0d07;--accentwash:rgba(255,138,92,.10);--muted:#c8a08f;--dim:#8f6a5c;--faint:#5e4237}
+  html[data-skin="clay"]{--bg:#160b08;--panel:#22110c;--panel2:#2d1811;--line:#3c221a;--line2:#553226;--accent:#ff8a5c;--accent2:#ffab88;--accent3:#b05e3d;--accentink:#1c0d07;--accentwash:rgba(255,138,92,.10);--muted:#c8a08f;--dim:#a2837a;--faint:#5e4237}
   html[data-skin="prime"]{--bg:#050e1a;--panel:#0b1930;--panel2:#11223e;--line:#1b3050;--line2:#28466e;--accent:#39d5ff;--accent2:#7ce4ff;--accent3:#2789a8;--accentink:#04121f;--accentwash:rgba(57,213,255,.10)}
   *{box-sizing:border-box;margin:0}
   html{scrollbar-color:var(--line2) transparent;scroll-behavior:smooth}
@@ -96,13 +101,13 @@
   .strow .sub{font:400 12px/1.2 var(--body);color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .strow .num{font-variant-numeric:tabular-nums;font-size:13px;color:var(--muted)}
   .strow .dupr{font:400 17px/1 var(--disp);font-style:italic;color:var(--accent)}
-  .strow .mut{color:var(--faint)}
+  .strow .mut{color:var(--dim)}
   .cmprow{display:grid;grid-template-columns:minmax(120px,1.2fr) 1fr 1fr 1fr;gap:14px;align-items:center;padding:11px 4px;border-bottom:1px solid var(--line)}
   .cmprow:last-child{border-bottom:0}
   .cmprow.chead span{font:800 10px/1 var(--body);letter-spacing:.12em;text-transform:uppercase;color:var(--dim)}
   .cmprow .clabel{color:var(--muted);font:600 13px/1.2 var(--body)}
   .cmprow .cval{font:400 19px/1 var(--disp);font-style:italic;color:var(--ink);font-variant-numeric:tabular-nums}
-  .cmprow .mut{color:var(--faint);font:400 13px var(--body)}
+  .cmprow .mut{color:var(--dim);font:400 13px var(--body)}
 
   .wrap{max-width:1080px;margin:0 auto;padding:20px 32px 72px}
 
@@ -295,7 +300,7 @@
   .scale .rail{position:absolute;left:0;right:0;top:15px;height:3px;border-radius:99px;background:var(--line);overflow:hidden}
   .scale .rail::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transform-origin:left;transform:scaleX(0);animation:railfill 1.3s var(--ease) .3s forwards}
   @keyframes railfill{to{transform:scaleX(1)}}
-  .scale .tick{position:absolute;top:23px;font:500 10px var(--body);color:var(--faint);transform:translateX(-50%)}
+  .scale .tick{position:absolute;top:23px;font:500 10px var(--body);color:var(--dim);transform:translateX(-50%)}
   .scale .mk{position:absolute;top:2px;width:4px;height:30px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 4px var(--accentwash);transform:translateX(-50%);left:0;transition:left 1.4s var(--ease) .3s}
   .conf{display:flex;align-items:center;gap:13px;margin-top:26px}
   .conf .cl{font-size:12.5px;color:var(--muted);line-height:1.4} .conf .cv{font:700 15px/1 var(--body)}
@@ -319,7 +324,7 @@
   .stat:last-child{border-right:0;padding-right:0}
   .grid .stat + .stat{padding-left:22px}
   .stat .v{font:400 27px/1.15 var(--disp);font-style:italic;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
-  .stat .v small{font-size:14px;color:var(--faint)}
+  .stat .v small{font-size:14px;color:var(--dim)}
   .stat .l{font:800 10px/1.3 var(--body);color:var(--dim);text-transform:uppercase;letter-spacing:.1em;margin-top:9px}
 
   .bars{display:flex;flex-direction:column;gap:10px;margin-top:14px}
@@ -337,7 +342,7 @@
   .rally{display:flex;align-items:center;gap:14px;padding:12px 10px;cursor:pointer;border-bottom:1px solid var(--line);transition:background .16s}
   .rally:hover{background:var(--panel2)}
   .rally:last-child{border-bottom:0}
-  .rally .idx{font:400 19px/1 var(--disp);font-style:italic;color:var(--faint);width:38px}
+  .rally .idx{font:400 19px/1 var(--disp);font-style:italic;color:var(--dim);width:38px}
   .rally.playing .idx{color:var(--accent)}
   .rally .info{flex:1;font-size:13.5px}
   .rally .dur{color:var(--dim);font-size:12px}
@@ -349,7 +354,7 @@
   .wbadge.ue{color:var(--amber);background:var(--amberwash)}
   .outcomes{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:2px 18px;margin-top:14px}
   .orow{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-  .orow .oidx{font:400 13px/1 var(--disp);font-style:italic;color:var(--faint);width:26px}
+  .orow .oidx{font:400 13px/1 var(--disp);font-style:italic;color:var(--dim);width:26px}
   .orow .oinfo{flex:1;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   .metafields{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end}
@@ -489,3 +494,44 @@
   .calfit.ok{color:var(--green)} .calfit.bad{color:var(--amber)}
   #calHelp{margin:8px 0 0;color:var(--dim);font-size:13px}
   .calbtns button{min-height:44px}
+
+  /* ---- accessibility ---- */
+  .sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+  .skip{position:absolute;left:8px;top:-60px;z-index:300;background:var(--accent);color:var(--accentink);padding:10px 16px;border-radius:6px;font-weight:700;text-decoration:none}
+  .skip:focus{top:8px}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+  .palbox input:focus-visible,.fld input:focus-visible{outline:2px solid var(--accent)}
+  #main:focus{outline:none}
+  .ptfix button{min-width:48px}
+  .wbadge.win::before{content:"\2713 "} .wbadge.loss::before{content:"\2717 "}
+  .mseg{cursor:default}
+
+  /* ---- phones and touch ---- */
+  body{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .top{padding-top:calc(11px + env(safe-area-inset-top))}
+  .toast{bottom:calc(30px + env(safe-area-inset-bottom))}
+  .wrap{padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+  @media (max-width:640px){
+    .wrap{padding-left:16px;padding-right:16px}
+    .top{padding-left:16px;padding-right:16px}
+    .card,.hero,.figcard{padding-left:16px;padding-right:16px}
+  }
+  @media (pointer:coarse){
+    /* iOS zooms the page when focusing a field under 16px; targets under 44px get missed */
+    input,select,textarea{font-size:16px !important}
+    button,.back,.link,.linkbtn,summary,select,.navlist span,.navdrop>span,.navdrop-panel a,.step{min-height:44px}
+    .navlist span,.navdrop>span,.navdrop-panel a,.back,.link{display:inline-flex;align-items:center}
+    input:not([type=checkbox]):not([type=radio]){min-height:44px}
+    .cb,input[type=checkbox]{width:24px;height:24px}
+    .ptfix button{min-height:44px !important;min-width:56px;padding:8px 14px !important;font-size:12px !important}
+    .skinbtn{width:34px;height:34px}
+    .rally,.sess,.strow{min-height:48px}
+  }
+  /* nothing may depend on hover: the momentum bars and shot dots carry their meaning in text/aria */
+  @media (hover:none){ .card::after,.figcard::after,.hero::after{display:none} }
+
+  @media (pointer:coarse){
+    .logo{min-height:44px;display:inline-flex;align-items:center}
+    .rmore>button,.linkbtn,.caltools button{min-width:44px}
+    .kbd{display:none}
+  }

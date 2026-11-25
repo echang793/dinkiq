@@ -2,25 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>DinkIQ — Broadcast Booth</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Archivo:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,700;1,800&display=swap" rel="stylesheet">
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
+<meta name="theme-color" content="#060c1a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="DinkIQ">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="static/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="static/icons/icon-192.png">
+<link rel="preload" href="static/fonts/archivo.woff2?v=1" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="static/fonts/archivo-black.woff2?v=1" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="static/css/app.css?v={{V}}">
 </head>
 <body>
+<a class="skip" href="#main">Skip to content</a>
 <div class="netbar" id="netBar" role="alert" hidden>
   <span id="netMsg"></span>
   <button class="netbtn" id="netRetry" onclick="retryBackend()">Retry</button>
 </div>
-<div class="top">
+<div class="top" role="banner">
   <div class="logo" onclick="goHome()" tabindex="0" role="button" aria-label="Home">
     <span class="bug">DI</span>
     <b>DINK<i>IQ</i></b>
   </div>
   <div class="sp"></div>
-  <div class="navlist">
+  <div class="navlist" role="navigation" aria-label="Main">
     <span class="here" id="navFilm" onclick="goHome()" tabindex="0" role="button">Film Room</span>
     <span id="navSessions" onclick="goSessions()" tabindex="0" role="button">Sessions</span>
     <span id="navTrends" onclick="goTrends()" tabindex="0" role="button">Trends</span>
@@ -46,9 +54,10 @@
 
 <div class="ribbon" id="ribbon"><div class="ribtrack" id="ribtrack"></div></div>
 
-<div class="wrap">
+<div class="wrap" id="main" role="main" tabindex="-1">
 
-  <section class="screen on" id="home">
+  <section class="screen on" id="home" aria-label="Film Room">
+    <h1 class="sr">Film Room</h1>
     <div class="card">
       <h2>New session</h2>
       <div id="focusReminder" style="display:none;margin-bottom:12px"></div>
@@ -63,7 +72,7 @@
         <div class="upbar" id="upBarWrap" style="display:none"><i id="upBar"></i></div>
         <div class="upmeta" id="upMeta" style="display:none"><span id="upName"></span><span><b id="upPct">0%</b> <span id="upMb"></span> <button class="ghost sm" id="upCancel" onclick="event.stopPropagation(); cancelUpload()">Cancel</button></span></div>
       </div>
-      <input type="file" id="file" accept=".mp4,.mov,.m4v" style="display:none">
+      <input type="file" id="file" aria-label="Choose a match video" accept=".mp4,.mov,.m4v" style="display:none">
       <div id="upWarn"></div>
     </div>
     <div class="homegrid">
@@ -88,7 +97,8 @@
     </div>
   </section>
 
-  <section class="screen" id="calib">
+  <section class="screen" id="calib" aria-label="Calibrate the court">
+    <h1 class="sr">Calibrate the court</h1>
     <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
     <div class="card" id="calCard">
       <h2>Calibrate the court</h2>
@@ -121,7 +131,8 @@
     </div>
   </section>
 
-  <section class="screen" id="proc">
+  <section class="screen" id="proc" aria-label="Analyzing your match">
+    <h1 class="sr">Analyzing your match</h1>
     <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions (keeps running)</span>
     <div class="card">
       <h2 id="procTitle">Analyzing your match</h2>
@@ -132,17 +143,18 @@
       <div class="procwrap" id="procWork">
         <div class="procring" id="procRing"></div>
         <div>
-          <div class="procmsg" id="procMsg">Warming up…</div>
+          <div class="procmsg" id="procMsg" aria-live="polite">Warming up…</div>
           <div class="procsub">Your film is safe — you can leave this page and it keeps working.</div>
           <div class="procstage" id="procSteps"></div>
-          <div class="bigbar"><i id="procBar"></i></div>
+          <div class="bigbar" role="progressbar" aria-label="Analysis progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="procBarWrap"><i id="procBar"></i></div>
           <div class="procmeta"><b id="procPct">0%</b><span id="procEta"></span></div>
         </div>
       </div>
     </div>
   </section>
 
-  <section class="screen" id="results">
+  <section class="screen" id="results" aria-label="Session results">
+    <h1 class="sr">Session results</h1>
     <div class="rhead">
       <span class="back" onclick="goHome()" style="margin:0" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
       <div class="rtools">
@@ -244,12 +256,12 @@
     <details class="card fold" id="metaCard">
       <summary><h2>Session info &amp; notes</h2></summary>
       <div class="metafields">
-        <div class="fld"><label>Label</label><input id="mLabel" placeholder="e.g. Saturday league" maxlength="120" style="width:220px"></div>
-        <div class="fld"><label>Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" maxlength="80" style="width:160px"></div>
-        <div class="fld"><label>Opponent</label><input id="mOpponent" placeholder="e.g. Sam" maxlength="80" style="width:160px" onchange="loadHeadToHead()"></div>
-        <div class="fld"><label>Played on</label><input id="mDate" type="date"></div>
-        <div class="fld"><label>Known DUPR</label><input id="mDupr" type="number" step="0.05" min="2" max="8" style="width:120px"></div>
-        <div class="fld"><label>Context</label>
+        <div class="fld"><label for="mLabel">Label</label><input id="mLabel" placeholder="e.g. Saturday league" maxlength="120" style="width:220px"></div>
+        <div class="fld"><label for="mPlayer">Player</label><input id="mPlayer" placeholder="whose footage — e.g. Sam" maxlength="80" style="width:160px"></div>
+        <div class="fld"><label for="mOpponent">Opponent</label><input id="mOpponent" placeholder="e.g. Sam" maxlength="80" style="width:160px" onchange="loadHeadToHead()"></div>
+        <div class="fld"><label for="mDate">Played on</label><input id="mDate" type="date"></div>
+        <div class="fld"><label for="mDupr">Known DUPR</label><input id="mDupr" type="number" step="0.05" min="2" max="8" style="width:120px"></div>
+        <div class="fld"><label for="mContext">Context</label>
           <select id="mContext" style="width:140px">
             <option value="">—</option>
             <option value="practice">Practice</option>
@@ -260,9 +272,9 @@
         <button class="ghost sm" onclick="saveMeta()">Save</button>
         <span class="saved" id="mSaved">saved ✓</span>
       </div>
-      <div class="fld" style="margin-top:10px"><label>Notes</label><textarea id="mNotes" rows="3" placeholder="what worked, what to fix next time…" maxlength="500" style="width:100%;resize:vertical"></textarea></div>
+      <div class="fld" style="margin-top:10px"><label for="mNotes">Notes</label><textarea id="mNotes" rows="3" placeholder="what worked, what to fix next time…" maxlength="500" style="width:100%;resize:vertical"></textarea></div>
       <div class="metafields" style="margin-top:10px">
-        <input type="file" id="mReuploadFile" accept="video/mp4,video/quicktime,video/x-m4v" style="display:none" onchange="doReupload()">
+        <input type="file" id="mReuploadFile" aria-label="Choose a replacement video" accept="video/mp4,video/quicktime,video/x-m4v" style="display:none" onchange="doReupload()">
         <button class="ghost sm" onclick="$('mReuploadFile').click()">Replace video…</button>
         <span class="mut" style="font-size:12px">wrong or corrupt upload? swap the file without losing this session's notes</span>
       </div>
@@ -285,11 +297,11 @@
     </div>
     <div class="card">
       <div class="metafields" style="margin-bottom:14px">
-        <input id="sFilterLabel" placeholder="search label…" style="width:180px" oninput="loadSessionsPageSoon()">
-        <input id="sFilterOpponent" placeholder="search opponent…" style="width:160px" oninput="loadSessionsPageSoon()">
-        <input id="sFilterFrom" type="date" title="played on/after" onchange="loadSessionsPage()">
-        <input id="sFilterTo" type="date" title="played on/before" onchange="loadSessionsPage()">
-        <select id="sFilterContext" onchange="loadSessionsPage()">
+        <input id="sFilterLabel" aria-label="Search by label" placeholder="search label…" style="width:180px" oninput="loadSessionsPageSoon()">
+        <input id="sFilterOpponent" aria-label="Search by opponent" placeholder="search opponent…" style="width:160px" oninput="loadSessionsPageSoon()">
+        <input id="sFilterFrom" aria-label="Played on or after" type="date" title="played on/after" onchange="loadSessionsPage()">
+        <input id="sFilterTo" aria-label="Played on or before" type="date" title="played on/before" onchange="loadSessionsPage()">
+        <select id="sFilterContext" aria-label="Context" onchange="loadSessionsPage()">
           <option value="">any context</option>
           <option value="practice">Practice</option>
           <option value="league">League</option>
@@ -312,8 +324,8 @@
     <div class="card" id="clipCmpCard" style="display:none">
       <h2>Side-by-side clips</h2>
       <div class="metafields">
-        <div class="fld"><label id="clipCmpLabelA">Session A</label><select id="clipCmpRallyA"></select></div>
-        <div class="fld"><label id="clipCmpLabelB">Session B</label><select id="clipCmpRallyB"></select></div>
+        <div class="fld"><label id="clipCmpLabelA">Session A</label><select id="clipCmpRallyA" aria-label="Rally from session A"></select></div>
+        <div class="fld"><label id="clipCmpLabelB">Session B</label><select id="clipCmpRallyB" aria-label="Rally from session B"></select></div>
         <button class="ghost sm" onclick="playBothClips()">▶ Play both</button>
       </div>
       <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap">
@@ -354,7 +366,7 @@
 <div class="scanfx"></div>
 <i class="hudcnr tl"></i><i class="hudcnr tr"></i><i class="hudcnr bl"></i><i class="hudcnr br"></i>
 <div class="pal" id="pal"><div class="palbox">
-  <input id="palIn" placeholder="Jump to a page, session, or theme…" autocomplete="off">
+  <input id="palIn" aria-label="Jump to a page, session, or theme" placeholder="Jump to a page, session, or theme…" autocomplete="off">
   <div class="pallist" id="palList"></div>
   <div class="palhint">↑↓ navigate &nbsp;·&nbsp; ↵ select &nbsp;·&nbsp; esc close</div>
 </div></div>
@@ -387,7 +399,7 @@
     </div>
   </form>
 </dialog>
-<div class="toast" id="toast"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="static/js/core.js?v={{V}}"></script>
 <script src="static/js/upload.js?v={{V}}"></script>

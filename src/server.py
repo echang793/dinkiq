@@ -225,6 +225,22 @@ def index(request: Request):
     return _spa(STATIC / "dashboard.html", request)
 
 
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # never cached: a stale worker cannot be fixed from the outside once a phone has it
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/offline")
+def offline_page():
+    return FileResponse(STATIC / "offline.html")
+
+
 @app.get("/backyard")
 def backyard(request: Request):
     # self-contained page, no API calls of its own — no prefix needed, and it

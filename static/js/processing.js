@@ -91,6 +91,7 @@ function waitFor(pred, then, label, quiet) {
       const pct = Math.round(100 * (s.overall || 0));
       $('procBar').style.width = pct + '%';
       $('procPct').textContent = pct + '%';
+      $('procBarWrap').setAttribute('aria-valuenow', pct);
       const key = s.stage + ':' + pct;
       if (key !== lastKey) { lastKey = key; lastChange = Date.now(); }
       let eta = s.eta_seconds != null ? fmtEta(s.eta_seconds) : '';

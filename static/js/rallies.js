@@ -89,7 +89,7 @@ function renderRallies(ev) {
   animateStats($('rallyStats'));
   const notes = (lastSession && lastSession.meta && lastSession.meta.clip_notes) || {};
   list.innerHTML = ev.rallies.map((r, i) =>
-    '<div class="rally" id="rallyRow' + i + '" onclick="playClip(' + i + ')">' +
+    '<div class="rally" id="rallyRow' + i + '" role="button" tabindex="0" aria-label="Watch rally ' + (i + 1) + '" onclick="playClip(' + i + ')">' +
       '<span class="idx">' + String(i+1).padStart(2,'0') + '</span>' +
       '<span class="info">' + r.hits + ' hits <span class="dur">· ' + r.duration + ' s · at ' + fmtClock(r.start) + '</span></span>' +
       '<span class="play">▶ watch</span></div>' +
@@ -142,8 +142,8 @@ function drawHeatmap(m, animate, cid) {
   if (!grid || !grid.length) { $(cid).style.display = 'none'; return; }
   $(cid).style.display = 'block';
   const rows = grid.length, cols = grid[0].length, S = 22, P = 24;
-  const c = $(cid); c.width = cols * S + P * 2; c.height = rows * S + P * 2;
-  const ctx = c.getContext('2d');
+  const CW = cols * S + P * 2, CH = rows * S + P * 2;
+  const c = $(cid), ctx = hiDpi(c, CW, CH);
   const V = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const sk = SKINS[currentSkin()] || SKINS.night;
   const H_SURF = V('--panel2'), H_KIT = 'rgba(' + sk.hi + ',.08)';
@@ -163,7 +163,7 @@ function drawHeatmap(m, animate, cid) {
   const t0 = performance.now();
   function frame(now) {
     const prog = DUR ? Math.min(1, (now - t0) / DUR) : 1;
-    ctx.fillStyle = H_SURF; ctx.fillRect(0, 0, c.width, c.height);
+    ctx.fillStyle = H_SURF; ctx.fillRect(0, 0, CW, CH);
     ctx.fillStyle = H_KIT; ctx.fillRect(P, ftY(15), cols * S, ftY(29) - ftY(15));
     cells.forEach((o, i) => {
       const start = (i / n) * 0.6;
@@ -199,9 +199,11 @@ function drawMovementCurve(curve) {
   const wrap = $('curveWrap');
   if (!curve || curve.length < 2) { wrap.style.display = 'none'; return; }
   wrap.style.display = 'block';
-  const c = $('curveCanvas'), ctx = c.getContext('2d');
   const Wd = 560, Hd = 140, P = 30;
-  c.width = Wd; c.height = Hd;
+  const c = $('curveCanvas'), ctx = hiDpi(c, Wd, Hd);
+  const sp = curve.map(p => p.avg_speed_ft_s);
+  c.setAttribute('role', 'img');
+  c.setAttribute('aria-label', 'Movement speed over the session, ' + Math.min(...sp).toFixed(1) + ' to ' + Math.max(...sp).toFixed(1) + ' feet per second; it ' + (sp[sp.length - 1] < sp[0] ? 'slows' : 'picks up') + ' toward the end.');
   const V = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   ctx.clearRect(0, 0, Wd, Hd);
   const speeds = curve.map(p => p.avg_speed_ft_s);

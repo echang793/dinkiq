@@ -271,13 +271,13 @@ function renderPoints(pt, ev) {
   if (outs.length > 1) {
     const hitsArr = (ev && ev.rallies) || [];
     const maxh = Math.max(1, ...hitsArr.map(r => r.hits || 0));
-    note += '<div class="momwrap"><div class="momlbl"><span>Momentum — point by point</span><span>height = rally length</span></div><div class="momrow">' +
+    note += '<div class="momwrap"><div class="momlbl"><span>Momentum — point by point</span><span>green won · red lost · grey unclear · height = rally length</span></div><div class="momrow">' +
       outs.map((o, i) => {
         const h = hitsArr[i] ? hitsArr[i].hits : 4;
         const hh = Math.round(8 + 24 * Math.min(1, h / maxh));
         const col = isMyTeam(o.winner) ? 'var(--green)' : isOppTeam(o.winner) ? 'var(--red)' : 'var(--faint)';
         const t = 'Rally ' + (i + 1) + (isMyTeam(o.winner) ? ' — won' : isOppTeam(o.winner) ? ' — lost' : '') + (o.unforced_error ? ' (UE)' : '');
-        return '<i class="mseg" title="' + t + '" style="height:' + hh + 'px;background:' + col + ';animation-delay:' + (i * 55) + 'ms"></i>';
+        return '<i class="mseg" role="img" aria-label="' + t + '" title="' + t + '" style="height:' + hh + 'px;background:' + col + ';animation-delay:' + (i * 55) + 'ms"></i>';
       }).join('') + '</div></div>';
   }
   if (outs.length) {
@@ -397,11 +397,14 @@ function renderShots(sh) {
 const SHOT_TYPE_COLORS = { drive: '#5b82e8', dink: '#39d5ff', drop: '#f0a63d', medium: '#8b6bf0', unknown: '#6b7280' };
 const SHOT_TYPE_LABELS = { drive:'Drive', dink:'Dink', drop:'Drop', medium:'Medium-paced', unknown:'Not classified' };
 function drawShotHeatmap(shots) {
-  const c = $('shotHeatCanvas'), ctx = c.getContext('2d');
   const S = 8, P = 20, W = 20, L = 44;  // court feet: width x length
-  c.width = Math.round(W * S) + P * 2; c.height = Math.round(L * S) + P * 2;
+  const CW = Math.round(W * S) + P * 2, CH = Math.round(L * S) + P * 2;
+  const c = $('shotHeatCanvas'), ctx = hiDpi(c, CW, CH);
+  const counts = {}; shots.forEach(s => { counts[s.type] = (counts[s.type] || 0) + 1; });
+  c.setAttribute('role', 'img');
+  c.setAttribute('aria-label', 'Where your shots were hit from on the court: ' + Object.entries(counts).map(([t, n]) => n + ' ' + (SHOT_TYPE_LABELS[t] || t).toLowerCase()).join(', ') + '.');
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--panel2').trim();
-  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.fillRect(0, 0, CW, CH);
   ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--line2').trim();
   ctx.lineWidth = 2;
   ctx.strokeRect(P, P, W * S, L * S);
@@ -427,9 +430,9 @@ function drawShotHeatmap(shots) {
   c.style.cursor = DEMO ? '' : 'pointer';
   c.onclick = DEMO ? null : (e) => {
     const rect = c.getBoundingClientRect();
-    const cx = (e.clientX - rect.left) * (c.width / rect.width);
-    const cy = (e.clientY - rect.top) * (c.height / rect.height);
-    let best = -1, bestD = 14;  // px hit radius in canvas space
+    const cx = (e.clientX - rect.left) * (CW / rect.width);
+    const cy = (e.clientY - rect.top) * (CH / rect.height);
+    let best = -1, bestD = matchMedia('(pointer:coarse)').matches ? 26 : 14;  // hit radius in canvas units (fingers are fat)
     shots.forEach((s, i) => {
       const d = Math.hypot(px(s.x) - cx, py(s.y) - cy);
       if (d < bestD) { bestD = d; best = i; }

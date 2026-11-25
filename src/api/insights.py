@@ -5,6 +5,7 @@ import datetime
 from fastapi import APIRouter, HTTPException
 
 import pipeline
+from api import sessions as sessions_api
 from api.common import DEFAULT_PLAYER_NAME, belongs_to, compare_summary, get_session_dir, iter_sessions, read_artifact
 from jsonio import load_json
 from session_status import get_status
@@ -54,6 +55,13 @@ def progress(player: str | None = None):
         })
     points.sort(key=lambda p: p["date"])
     return points
+
+
+@router.get("/api/home")
+def home(player: str | None = None):
+    """Everything the Home screen shows, in one round trip (it used to make two /sessions and
+    three /progress calls): the session list and the trend series scoped to `player`."""
+    return {"sessions": sessions_api.sessions(), "progress": progress(player)}
 
 
 @router.get("/api/compare")

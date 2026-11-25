@@ -37,7 +37,7 @@ def test_every_referenced_asset_exists_and_is_served():
     for path in re.findall(r'(?:src|href)="(static/[^"?]+)\?v=', html):
         r = client.get("/" + path)
         assert r.status_code == 200, path
-        assert r.headers["content-type"].split(";")[0] in ("text/css", "text/javascript", "application/javascript"), path
+        assert r.headers["content-type"].split(";")[0] in ("text/css", "text/javascript", "application/javascript", "font/woff2"), path
 
 
 def test_the_asset_version_changes_when_a_file_changes(tmp_path, monkeypatch):

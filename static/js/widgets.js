@@ -1,6 +1,6 @@
 'use strict';
 /* ---------------- data ribbon ---------------- */
-async function buildRibbon(){
+async function buildRibbon(sessions, pts){
   // Was a hardcoded constant shown to every user regardless of whether
   // they'd ever uploaded a match — a brand-new account saw confident fake
   // stats ("Sessions analyzed 3") about play that never happened. Pull the
@@ -10,9 +10,9 @@ async function buildRibbon(){
   if (!t) return;
   let items = null;
   try {
-    const sessions = await api('/sessions');
+    sessions = sessions || await api('/sessions');
     const done = sessions.filter(s => s.stage === 'done');
-    const pts = await api('/progress' + playerQS());
+    pts = pts || await api('/progress' + playerQS());
     if (done.length) {
       const full = await api('/session/' + done[0].session_id);  // newest first
       const m = full.metrics || {}, ev = full.events || {}, sh = full.shots || {}, dp = full.dupr || {};

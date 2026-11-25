@@ -104,3 +104,17 @@ def test_streak_uses_the_given_player():
     _tag(_mk_done("sk_sam", today, 20.0, None), "Sam")
     assert client.get("/api/streak", params={"player": "Eric"}).json()["days_played"] == 1
     assert client.get("/api/streak", params={"player": "Nobody"}).json()["days_played"] == 0
+
+
+# ── /api/home: one round trip for the Home screen ───────────────────────
+
+def test_home_bundles_sessions_and_progress_identically():
+    _tag(_mk_done("hm_a", "2026-07-01", 20.0, None), "Eric")
+    _tag(_mk_done("hm_b", "2026-07-02", 30.0, None), "Sam")
+    home = client.get("/api/home").json()
+    assert home["sessions"] == client.get("/api/sessions").json()
+    assert home["progress"] == client.get("/api/progress").json()
+    mine = client.get("/api/home", params={"player": "Eric"}).json()
+    assert mine["progress"] == client.get("/api/progress", params={"player": "Eric"}).json()
+    assert {p["session_id"] for p in mine["progress"]} == {"hm_a"}
+    assert len(mine["sessions"]) == 2                  # the session list is everyone's; only the trend is scoped
