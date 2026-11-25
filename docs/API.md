@@ -58,7 +58,8 @@ ingest starts in the background. Without `session_id` a new session is created;
 with it the video is swapped in **only if it probes as a readable video** (else `400`, original
 kept), derived analysis is cleared and the session returns to `ingest`. `503` if ffmpeg/
 ffprobe is missing from the service's PATH (the upload is kept for retry). `warning` for
-videos over 30 min; `capture_hint` when the source is larger than the 720p30 analysis needs.
+videos over 30 min; `capture_hint` when the source is larger than the 720p30 analysis needs, or recorded in
+portrait. Ingest re-encodes anything that isn't already 720p, constant 30.00 fps, upright H.264.
 
 ## Sessions
 
@@ -80,31 +81,44 @@ Status fields + `meta` + whichever of `metrics`, `events`, `hits`, `shots`, `poi
 (an unreadable artifact is simply omitted). While processing: `progress` (0–1 in stage),
 `overall` (0–1), `eta_seconds`; `queue_position` while queued.
 
-- `metrics`: `zone_pct{kitchen,transition,baseline}`, `distance_ft`, `avg_speed_ft_s`,
+- `metrics`: `zone_pct{kitchen,transition,baseline}` + `zone_scope` (`"live"` = measured during rallies,
+  `"all"` = the whole session, used when under ~30 s of live play was tracked) + `live_seconds`,
+  `identity_issues[]` (e.g. `partner_not_found`: the partner tap landed on nobody, so the subject is
+  analysed alone), `distance_ft`, `avg_speed_ft_s`,
   `active_seconds`, `frames_analyzed`, `median_dist_from_net_ft`, `coverage_pct`,
   `heatmap` (grid) + `heatmap_cell_ft`, `movement_curve[]`, `camera_cuts`,
   `secondary_court_tracks`, `match_type`, `subject_track_id`, `partner_track_id`,
   `opponent_track_ids[]`, `opponent_track_id`, `warnings[]`.
 - `events`: `rally_count`, `total_hits`, `subject_shots`, `avg_rally_hits`, `max_rally_hits`,
   `avg_rally_seconds`, `play_time_pct`, `rallies[{start,end,hits,duration}]` (seconds),
-  `swing_count`, `partner_swing_count`, `opponent_swing_count`, track ids as above.
+  `swing_count`, `partner_swing_count`, `opponent_swing_count` (swings = wrist motion relative to the body
+  over the player's height), `isolated_hits` (hits in no rally: serve faults, unreturned serves), track ids as above.
 - `hits`: one row per corroborated paddle hit, `[{t, hitter, rally, n}]` — `hitter` ∈ `subject`|
   `partner`|`opponent1`|`opponent2`|`unknown`, `rally` the index into `events.rallies` (null for an
   isolated hit: a serve fault, ace or unreturned serve), `n` its 0-based position in that rally.
-- `shots`: `available` (false → `reason`), `ball{coverage,segments,frames,stride}`,
-  `shots[{t,type,mph?,swing_mph?,x,y}]` (type: drive|dink|drop|medium|unknown), `shot_mix{}`,
+- `shots`: `available` (false → `reason`; ball metrics are withheld when the ball track doesn't show up after
+  hits more often than at random moments), `ball{coverage,segments,raw_segments,frames,stride,hit_ball_rate,
+  chance_ball_rate,hit_ball_lift}`,
+  `shots[{t,type,mph?,mph_source?,swing_mph?,x,y}]` (type: drive|dink|drop|medium|unknown; `mph_source`
+  `"ground"` = hitter→bounce distance over flight time, `"screen"` = fallback; an implausible speed has no mph
+  and type `unknown`; subject's own hits only), `shot_mix{}`,
   `avg_shot_mph`, `top_shot_mph`, `top_shot_t`, `avg_swing_mph`, `serves_measured`,
   `avg_serve_depth_from_baseline_ft`, `deep_serve_pct`, `serves[]`, `serve_side_counts{}`,
   `opponent_shots{shots_tracked, side_counts, dominant_side, dominant_side_pct, landings[]}`,
   `bounces_px[]` (pixel-space, capped).
-- `points`: `outcomes[{server,winner,unforced_error,corrected?}]` (index-aligned with
-  `events.rallies`; winner ∈ `my_team`|`opp_team`|`unknown`, or a player label before any
-  correction), `points_scored`, `points_won`, `points_lost`, `win_pct`, `serve_win_pct`,
+- `points`: `outcomes[{server,last_hitter,winner,unforced_error,corrected?}]` (index-aligned with
+  `events.rallies`; winner ∈ `my_team`|`opp_team`|`unknown` — **unknown whenever no usable ball track
+  saw where the last shot landed**; it is never assumed), `points_scored`, `points_won`, `points_lost`, `win_pct`, `serve_win_pct`,
   `return_win_pct` (any `null` if unknown), `unforced_errors`, `hits_by_player{}`,
   `serve_side_win_rates{}`, `shot_type_outcomes{}`, `caveat?` (ball tracking unavailable).
-- `dupr`: `available`, `band` (quarter steps), `band_raw`, `confidence` (0–1),
+- `dupr`: `available` (false → `reason`, e.g. under 45 s of the player tracked), `band` (quarter
+  steps), `band_low`/`band_high` (the range to show: ±0.25 when confident, up to ±1.25 when little is
+  known), `band_raw`, `confidence` (0–1) + `confidence_level` (`low`|`medium`|`high`), `calibrated`
+  (fitted against known-rating footage for this match type), `at_ceiling`/`at_floor` (the rubric spans
+  about 2.5–5.0; a stronger player reads the same), only dimensions that were actually measured,
   `dimensions{name:{label,value,band,weight,...}}`, `caveats[]`, `tips[]`, `drills[]`.
-  Always present it as "resembles ~X.X", never a certified rating.
+  Always present it as "resembles ~X.X" with its range and confidence — never a bare number, never a
+  certified rating.
 
 ### `PATCH /session/{sid}/meta`
 Any of `{label, played_at, known_dupr: 2.0–8.0, notes, opponent, player, context}` → merged

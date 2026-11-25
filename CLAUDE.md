@@ -108,7 +108,7 @@ Venv is Python 3.13 (torch incompatible with system 3.14); ffmpeg via brew.
 - **One decode pass**: ball detection and camera cuts fed from tracking loop; never add a second decode
 - **`tracks.parquet` / `ball.parquet` are pixel-space** and survive recalibration; court-derived data is disposable
 - **Frame numbers in parquets are REAL video frames** (tracking stride=2); time = frame / FPS
-- **Homography**: outer corners user-estimated, kitchen corners anchor the fit; ball valid only at bounces
+- **Homography**: outer corners user-estimated; kitchen corners add four correspondences to an UNWEIGHTED least-squares fit (they do not "anchor" it); ball valid only at bounces
 - **Honest degradation**: gate shots on ball coverage; apply confidence penalties (short sample, geometry, camera cuts)
 - **Single analysis worker** (`pipeline.enqueue_analyze`) — no parallel analyze threads (MPS contention)
 
@@ -126,5 +126,12 @@ Venv is Python 3.13 (torch incompatible with system 3.14); ffmpeg via brew.
   one truncated file used to 500 every list endpoint, and a NaN used to 500 or crash iOS Safari.
 - `py_compile` passes with missing imports — verify by importing the module
 - Court lines are any color (not necessarily white)
-- UI copy: DUPR estimates are "resembles ~X.X", never certified ratings
+- UI copy: DUPR estimates are "resembles ~X.X", never certified ratings — always with the range and confidence level
+- **Tunable constants, each from ONE clip's evidence (the sample); re-check them against your own footage**:
+  `events.SWING_MIN_BODY_HEIGHTS_S` (2.0), `events.Z_MIN` (10), `metrics.MIN_LIVE_SAMPLES` (~30 s),
+  `shots.HIT_LIFT_MIN`/`HIT_RATE_MIN` (ball must follow hits 1.5x more than chance), `ball.MAX_SEGMENT_FRAMES`/
+  `MIN_SEGMENT_*`. There is no labelled footage to validate any of them: the rating is an uncalibrated heuristic
+  until `calibrate_rubric.py` has >= 4 known-rating sessions per match type.
+- Pose runs on the GPU at imgsz 960 (`DINKIQ_DEVICE`, `DINKIQ_POSE_IMGSZ`); `tracks.meta.json` records what made the
+  cache, and a different model/size discards it on re-analysis
 
