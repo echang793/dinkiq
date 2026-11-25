@@ -225,10 +225,6 @@
   .calhint b{font:700 15px/1.3 var(--body);display:block}
   .calhint span{color:var(--muted);font-size:12.5px;display:block;margin-top:3px}
   .calwrap{position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--line2);box-shadow:var(--sh)}
-  #calCanvas{width:100%;display:block;cursor:none}
-  .loupe{position:absolute;width:120px;height:120px;border-radius:99px;border:2.5px solid var(--accent);pointer-events:none;display:none;overflow:hidden;box-shadow:0 10px 34px rgba(0,0,0,.5);z-index:5;background:#000}
-  .loupe canvas{display:block;width:120px;height:120px}
-  .loupe::after{content:"";position:absolute;left:50%;top:50%;width:13px;height:13px;margin:-6.5px;border-radius:99px;border:1.5px solid var(--accent)}
   .calbtns{display:flex;gap:11px;margin-top:16px;align-items:center;flex-wrap:wrap}
   .calbtns .n{color:var(--dim);font-size:12px;margin-left:auto}
 
@@ -471,3 +467,25 @@
   /* effects off (reduced motion, touch, or the setting): same treatment as prefers-reduced-motion */
   html[data-fx="off"] :is(.ribtrack,.sess,.strow:not(.shead),.stat,.reddot,.mseg,.pbbug,.stinger.go .slate,.card::after,.figcard::after,.hero::after){animation:none}
   html[data-fx="off"] :is(.stinger.go,.scanfx,.boot.go){display:none}
+
+  /* ---- calibration: touch-first ---- */
+  .calwrap{position:relative;overflow:hidden;border-radius:10px;border:1px solid var(--line2);background:#0e1116;height:min(68vh,calc(100vw * .62),560px);min-height:300px;touch-action:none;user-select:none;-webkit-user-select:none}
+  #calCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:crosshair}
+  #calCanvas.panning{cursor:grab}
+  .loupe{position:absolute;width:120px;height:120px;border-radius:99px;border:3px solid var(--accent);pointer-events:none;display:none;box-shadow:0 10px 34px rgba(0,0,0,.6);z-index:5;background:#000}
+  .caltools{position:absolute;right:8px;bottom:8px;display:flex;gap:6px;z-index:6}
+  .caltools button{min-width:44px;min-height:44px;padding:0 10px;font-size:16px;letter-spacing:0;background:rgba(14,17,22,.82);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line2)}
+  .caltools button[aria-pressed="true"]{background:var(--accent);color:var(--accentink)}
+  .calmini{display:none;position:absolute;left:0;right:0;top:0;z-index:6;align-items:center;gap:8px;padding:8px 10px;background:rgba(14,17,22,.88);border-bottom:1px solid var(--line2)}
+  .calmini span{flex:1;font:700 14px/1.3 var(--body);min-width:0}
+  .calwrap.full{position:fixed;inset:0;z-index:200;height:auto;min-height:0;border-radius:0;border:0}
+  .calwrap.full .calmini{display:flex;padding-top:max(8px,env(safe-area-inset-top))}
+  .calwrap.full .caltools{bottom:max(10px,env(safe-area-inset-bottom));right:max(8px,env(safe-area-inset-right))}
+  .calhint{gap:12px}
+  .calhint .diagram{flex:none;width:96px;height:60px}
+  .calhint .diagram svg{width:100%;height:100%;display:block}
+  .calhint span{font-size:14px;line-height:1.45}
+  .calfit{margin-top:10px;font-size:14px;min-height:20px;color:var(--muted)}
+  .calfit.ok{color:var(--green)} .calfit.bad{color:var(--amber)}
+  #calHelp{margin:8px 0 0;color:var(--dim);font-size:13px}
+  .calbtns button{min-height:44px}

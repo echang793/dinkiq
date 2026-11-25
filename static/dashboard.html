@@ -90,21 +90,34 @@
 
   <section class="screen" id="calib">
     <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions</span>
-    <div class="card">
+    <div class="card" id="calCard">
       <h2>Calibrate the court</h2>
-      <div class="steps" id="calSteps"></div>
-      <div class="calhint" id="calHint"></div>
+      <div class="steps" id="calSteps" aria-hidden="true"></div>
+      <div class="calhint" id="calHint" aria-live="polite"></div>
       <div class="calwrap" id="calWrap">
-        <canvas id="calCanvas"></canvas>
-        <div class="loupe" id="loupe"><canvas id="loupeCanvas" width="120" height="120"></canvas></div>
+        <canvas id="calCanvas" role="img" aria-label="Video frame. Touch and hold to place the next point; slide to adjust; lift to set it."></canvas>
+        <canvas id="loupe" class="loupe" width="240" height="240" aria-hidden="true"></canvas>
+        <div class="calmini" id="calMini">
+          <span id="calMiniText"></span>
+          <button class="ghost sm" onclick="undoCal()">Undo</button>
+          <button class="sm" onclick="setCalFull(false)">Done</button>
+        </div>
+        <div class="caltools" role="group" aria-label="Zoom and pan">
+          <button class="ghost" onclick="calZoom(1.5)" aria-label="Zoom in">+</button>
+          <button class="ghost" onclick="calZoom(1/1.5)" aria-label="Zoom out">−</button>
+          <button class="ghost" onclick="calFit()" aria-label="Fit whole frame">Fit</button>
+          <button class="ghost" id="calPanBtn" onclick="toggleCalPan()" aria-pressed="false">Pan</button>
+          <button class="ghost" id="calFullBtn" onclick="setCalFull(true)" aria-label="Full screen">⛶</button>
+        </div>
       </div>
+      <div class="calfit" id="calFitMsg" role="status" aria-live="polite"></div>
       <div class="calbtns">
         <button class="ghost sm" onclick="undoCal()">Undo point</button>
         <button class="ghost sm" onclick="resetCal()">Start over</button>
         <button class="ghost sm" id="calReuseBtn" onclick="reuseLastCalibration()" style="display:none">Use last calibration</button>
         <button id="calGo" onclick="submitCal()" disabled>Analyze session →</button>
-        <span class="n">zoom loupe follows your cursor</span>
       </div>
+      <p class="n" id="calHelp"></p>
     </div>
   </section>
 
@@ -379,6 +392,7 @@
 <script src="static/js/core.js?v={{V}}"></script>
 <script src="static/js/upload.js?v={{V}}"></script>
 <script src="static/js/processing.js?v={{V}}"></script>
+<script src="static/js/calgeom.js?v={{V}}"></script>
 <script src="static/js/calibrate.js?v={{V}}"></script>
 <script src="static/js/results.js?v={{V}}"></script>
 <script src="static/js/rallies.js?v={{V}}"></script>
