@@ -6,7 +6,10 @@ const $ = id => document.getElementById(id);
 // Caddy hub the app lives at /app/dinkiq/, and every root-absolute URL here
 // would otherwise resolve against the hub origin instead of this app.
 const BASE = window.__BASE__ || '';
-let sid = null, pollTimer = null, DEMO = false;
+let sid = null, pollTimer = null;
+// Sample data is opt-in (?demo=1) and always labelled. A network failure must never
+// quietly swap in fake data: it reads like real results and fake writes look saved.
+const DEMO = new URLSearchParams(location.search).has('demo');
 // must match dupr.py's BAND_MIN/BAND_MAX — every band the backend can ever
 // output is clamped to this range, so the gauge/bars/radar all scale to it
 // instead of a generic 2-8 DUPR scale (which would make a perfect 5.0 score,
@@ -50,46 +53,55 @@ function setSkin(k, ev){
   });
 }
 
-/* ---------------- API with demo fallback ---------------- */
-// A 404 here only means "no FastAPI backend at all" when it comes from one
-// of these boot-time index calls (e.g. this file served statically with no
-// /api/* routes behind it at all). A 404 from any OTHER endpoint is a
-// normal per-resource "not found" (deleted session, no scouting data yet,
-// etc.) and must NOT flip the whole app into demo/fake-data mode — every
-// other call already has its own try/catch that degrades that one widget.
-const DEMO_PROBE_PATHS = ['/sessions', '/progress'];
 async function api(p, opt) {
   if (DEMO) return mockApi(p, opt);
-  try {
-    const r = await fetch(BASE + '/api' + p, opt);
-    const isProbe = DEMO_PROBE_PATHS.some(probe => p === probe || p.startsWith(probe + '?'));
-    if (r.status === 404 && !DEMO && isProbe) { enableDemo(); return mockApi(p, opt); }
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw (e.detail || ('HTTP ' + r.status)); }
-    return r.json();
-  } catch (e) {
-    if (e instanceof TypeError) { enableDemo(); return mockApi(p, opt); }
+  let r;
+  try { r = await fetch(BASE + '/api' + p, opt); }
+  catch (e) {
+    if (e instanceof TypeError) { setOffline(true); throw "Can't reach DinkIQ"; }
     throw e;
   }
+  setOffline(false);
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw (e.detail || ('HTTP ' + r.status)); }
+  return r.json();
 }
 function frameURL() { return DEMO ? demoFrameURL() : BASE + '/api/session/' + sid + '/frame?ts=' + Date.now(); }
-let demoRetryTimer = null;
-function enableDemo(){
-  if (DEMO) return;
-  DEMO = true;
-  $('demoChip').style.display = 'inline-block';
-  setTimeout(() => { try { loadSessions(); } catch(e){} try { loadTrend(); } catch(e){} }, 0);
-  // a single dropped request shouldn't trap the tab in fake data forever —
-  // keep checking, and reload (a clean DEMO=false) the moment the server answers
-  if (!demoRetryTimer) demoRetryTimer = setInterval(() => {
-    fetch(BASE + '/api/sessions').then(r => { if (r.ok) location.reload(); }).catch(() => {});
-  }, 5000);
+
+/* ---------------- connection banner ---------------- */
+let offline = false, offlineTimer = null;
+function showBar(msg, cls, retry) {
+  const bar = $('netBar');
+  $('netMsg').textContent = msg;
+  $('netRetry').style.display = retry ? '' : 'none';
+  bar.className = 'netbar' + (cls ? ' ' + cls : '');
+  bar.hidden = false;
+  document.documentElement.style.setProperty('--bar-h', bar.offsetHeight + 'px');
 }
-function retryBackend() {
-  fetch(BASE + '/api/sessions').then(r => {
-    if (r.ok) location.reload();
-    else toast("Still can't reach the server — will keep retrying");
-  }).catch(() => toast("Still can't reach the server — will keep retrying"));
+function hideBar() {
+  $('netBar').hidden = true;
+  document.documentElement.style.setProperty('--bar-h', '0px');
 }
+function setOffline(on) {
+  if (DEMO || on === offline) return;
+  offline = on;
+  if (on) {
+    showBar("Can't reach DinkIQ — your data is safe on the server. Retrying…", 'off', true);
+    offlineTimer = setInterval(probeBackend, 5000);
+  } else {
+    clearInterval(offlineTimer); offlineTimer = null;
+    hideBar();
+    // the page was loaded against a dead server: refill the lists that came back empty
+    try { loadSessions(); } catch (e) {}
+    try { loadTrend(); } catch (e) {}
+    try { loadFocusReminder(); } catch (e) {}
+  }
+}
+function probeBackend() { return api('/sessions').then(() => true, () => false); }
+async function retryBackend() {
+  if (await probeBackend()) toast('Reconnected');
+  else toast("Still can't reach DinkIQ", true);
+}
+if (DEMO) showBar('SAMPLE DATA — this is a demo; nothing here is real and nothing is saved', '', false);
 
 function toast(msg, err) {
   const t = $('toast'); t.textContent = msg; t.className = 'toast on' + (err ? ' err' : '');

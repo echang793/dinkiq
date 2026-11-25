@@ -10,6 +10,10 @@
 <link rel="stylesheet" href="static/css/app.css?v={{V}}">
 </head>
 <body>
+<div class="netbar" id="netBar" role="alert" hidden>
+  <span id="netMsg"></span>
+  <button class="netbtn" id="netRetry" onclick="retryBackend()">Retry</button>
+</div>
 <div class="top">
   <div class="logo" onclick="goHome()" tabindex="0" role="button" aria-label="Home">
     <span class="bug">DI</span>
@@ -37,7 +41,6 @@
     <button class="skinbtn" data-k="clay" style="background:linear-gradient(135deg,#ff8a5c 50%,#22110c 50%)" onclick="setSkin('clay',event)" aria-label="Clay Court skin" title="Clay Court"></button>
     <button class="skinbtn" data-k="prime" style="background:linear-gradient(135deg,#39d5ff 50%,#0b1930 50%)" onclick="setSkin('prime',event)" aria-label="Prime Time skin" title="Prime Time"></button>
   </div>
-  <span class="chip demo" id="demoChip" onclick="retryBackend()" title="Showing sample data — can't reach the server. Retrying automatically; click to retry now." style="cursor:pointer">sample data · reconnecting…</span>
 </div>
 
 <div class="ribbon" id="ribbon"><div class="ribtrack" id="ribtrack"></div></div>
@@ -334,9 +337,9 @@
 <div class="boot" id="boot" onclick="endBoot()">
   <div class="blogo"><span class="bug">DI</span><b>DINK<i style="color:var(--accent)">IQ</i></b></div>
   <div class="blines">
-    <div class="bl"><span>court tracking</span><i>·············</i><b>ONLINE</b></div>
-    <div class="bl"><span>ball detection</span><i>·············</i><b>ONLINE</b></div>
-    <div class="bl"><span>rating engine</span><i>··············</i><b>ONLINE</b></div>
+    <div class="bl"><span>court tracking</span><i>·············</i><b>READY</b></div>
+    <div class="bl"><span>ball detection</span><i>·············</i><b>READY</b></div>
+    <div class="bl"><span>rating engine</span><i>··············</i><b>READY</b></div>
     <div class="bl"><span>broadcast feed</span><i>·············</i><b style="color:var(--red)">LIVE</b></div>
   </div>
   <div class="bbar"><i></i></div>

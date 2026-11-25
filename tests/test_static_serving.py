@@ -93,3 +93,15 @@ def test_images_and_pdfs_are_not_compressed():
     assert webutil.should_gzip("/api/session/x") is True
     assert webutil.should_gzip("/static/js/core.js") is True
     assert webutil.should_gzip("/") is True
+
+
+def test_sample_data_is_opt_in_never_a_silent_fallback():
+    """A dropped request used to flip the whole app into fake data that looked real
+    (and fake writes that looked saved). Sample mode must come only from ?demo=1."""
+    from pathlib import Path
+    js = {p.name: p.read_text() for p in (Path(__file__).resolve().parent.parent / "static/js").glob("*.js")}
+    assert not any("enableDemo" in t for t in js.values())
+    assert "has('demo')" in js["core.js"]
+    assert "DEMO = true" not in "".join(js.values())
+    page = client.get("/").text
+    assert "ONLINE" not in page              # the boot splash used to claim systems were online

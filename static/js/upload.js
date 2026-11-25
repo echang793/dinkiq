@@ -62,9 +62,7 @@ async function resumableUpload(f, matchType, done, fail, opts = {}) {
   try {
     init = await post('/api/upload/init', {filename: f.name, match_type: matchType, size: f.size, ...target});
   } catch (e) {
-    // no resumable endpoints (older server) or no backend at all
-    if (e.status === 404 || e.status === undefined) { enableDemo(); demoUpload(f, done); return; }
-    fail(parseDetail(e.body) || e.message); return;
+    fail(e.status === undefined ? "Can't reach DinkIQ — check your connection and try again" : (parseDetail(e.body) || e.message)); return;
   }
   const id = init.upload_id;
   let offset = 0;
