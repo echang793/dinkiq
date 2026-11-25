@@ -38,7 +38,7 @@ async function showResults(s) {
   $('metricWarn').innerHTML = (m.warnings || []).map(w => '<div class="caveat red" style="margin-bottom:10px">' + warnSVG + '<span>' + esc(w) + '</span></div>').join('');
   const zp = m.zone_pct || {};
   $('stats').innerHTML =
-    statCard(nz(zp.kitchen, '%'), 'time at kitchen line') +
+    statCard(nz(zp.kitchen, '%'), 'time at kitchen line<span class="n">' + (m.zone_scope === 'live' && m.live_seconds != null ? 'of ' + Math.round(m.live_seconds) + ' s of live play' : 'of ' + Math.round(m.active_seconds || 0) + ' s tracked') + '</span>') +
     statCard(nz(m.distance_ft == null ? null : Math.round(m.distance_ft).toLocaleString(), ' ft'), 'distance covered') +
     statCard(nz(m.avg_speed_ft_s, ' ft/s'), 'avg movement speed') +
     statCard(nz(m.active_seconds == null ? null : Math.round(m.active_seconds / 60), ' min'), 'time analyzed') +
@@ -255,7 +255,7 @@ function renderPoints(pt, ev) {
   if (has(pt.points_scored)) cards += statCard(pt.points_scored, 'points played');
   if (has(pt.points_won)) cards += statCard(pt.points_won, 'points won');
   if (has(pt.points_lost)) cards += statCard(pt.points_lost, 'points lost');
-  if (has(pt.win_pct)) cards += statCard(pt.win_pct + '<small>%</small>', 'win rate');
+  if (has(pt.win_pct)) cards += statCard(pt.win_pct + '<small>%</small>', 'win rate<span class="n">of ' + pt.points_scored + ' point' + (pt.points_scored === 1 ? '' : 's') + '</span>');
   if (has(pt.unforced_errors)) cards += statCard(pt.unforced_errors, 'unforced errors');
   $('pointStats').innerHTML = cards || '<div class="empty">Not enough scored rallies to tally points.</div>';
   animateStats($('pointStats'));
@@ -343,7 +343,7 @@ function renderShots(sh) {
   let cards = statCard(total, 'classified shots');
   if (sh.serves_measured) {
     cards += statCard(sh.avg_serve_depth_from_baseline_ft + '<small> ft</small>', 'avg serve dist from baseline') +
-             statCard(sh.deep_serve_pct + '<small>%</small>', 'deep serves');
+             statCard(sh.deep_serve_pct + '<small>%</small>', 'deep serves<span class="n">of ' + sh.serves_measured + ' serve' + (sh.serves_measured === 1 ? '' : 's') + '</span>');
   }
   if (sh.avg_shot_mph != null) {
     cards += statCard(sh.avg_shot_mph + '<small> mph</small>', 'avg shot speed') +

@@ -89,6 +89,14 @@ it to a temp dir), `DINKIQ_HOST` (bind address, default `127.0.0.1`), `DINKIQ_LO
   queue, recovery) · `src/stages.py` (events → shots → points → rating, `analyze()`) · `src/notify.py`
 - CV/analysis: `tracking`, `ball`, `events`, `shots`, `points`, `court`, `metrics`, `dupr`, `feedback`
 - `src/jsonio.py` — **all** JSON persistence goes through this (atomic writes, tolerant reads, NaN→null)
+- `static/dashboard.html` (markup only) + `static/css/app.css` + `static/js/*.js` — **no build step**. The scripts are
+  classic (non-module) and share one global scope, load order is the `<script>` order in the HTML (`core` first, `boot` last).
+  `{{V}}` in the HTML is replaced per request by `webutil.asset_version()` (hash of css/js mtimes); `?v=` URLs are immutable-cached,
+  everything else `no-cache`. Keep every URL relative / `BASE`-prefixed. `calgeom.js` is pure geometry, unit-tested under node
+  (`tests/test_calgeom.py`). `sw.js` is the app-shell service worker: it must never cache `/api/`.
+- Routes live in the URL hash (`#/`, `#/s/<id>`, `#/sessions`, `#/trends`, `#/compare?ids=`); `routeSession()` picks the screen a
+  session's state calls for. Sample data exists only behind `?demo=1` (banner); a failed fetch shows the offline banner, never fake data.
+- `src/webutil.py` — versioned static serving + gzip that skips media (gzip breaks Range seeking on clips)
 - `src/calibrate_rubric.py` — fit rubric vs known-DUPR sessions
 - `docs/API.md` — the API contract; `tests/test_api_docs.py` fails if it drifts from the app
 
@@ -101,6 +109,8 @@ it to a temp dir), `DINKIQ_HOST` (bind address, default `127.0.0.1`), `DINKIQ_LO
 ```
 
 Venv is Python 3.13 (torch incompatible with system 3.14); ffmpeg via brew.
+The live service does not hot-reload Python: after changing `src/`, `launchctl kickstart -k gui/501/com.vantage.dinkiq`
+(static files are read per request and need no restart).
 
 ## Invariants
 

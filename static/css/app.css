@@ -535,3 +535,5 @@
     .rmore>button,.linkbtn,.caltools button{min-width:44px}
     .kbd{display:none}
   }
+
+  .stat .l .n{display:block;margin-top:2px;font-size:11.5px;color:var(--dim);letter-spacing:0;text-transform:none;font-weight:500}
