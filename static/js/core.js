@@ -155,8 +155,8 @@ function show(id, instant) {
       { duration: 480, easing: 'cubic-bezier(.22,1,.36,1)', pseudoElement: '::view-transition-new(root)' });
   });
 }
-function goHome() { clearInterval(pollTimer); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
-function goSessions() { clearInterval(pollTimer); show('sessions'); loadSessionsPage(); }
-function goTrends() { clearInterval(pollTimer); show('trends'); loadTrendsPage(); }
+function goHome() { stopPoll(); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
+function goSessions() { stopPoll(); show('sessions'); loadSessionsPage(); }
+function goTrends() { stopPoll(); show('trends'); loadTrendsPage(); }
 function toggleNavMore(e) { e.stopPropagation(); $('navMorePanel').classList.toggle('open'); }
 document.addEventListener('click', () => { const p = $('navMorePanel'); if (p) p.classList.remove('open'); });

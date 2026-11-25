@@ -14,12 +14,12 @@ function fmtEta(s) {
   const m = Math.floor(s / 60), sec = Math.round(s % 60);
   return '~' + (m ? m + ' min ' + String(sec).padStart(2,'0') + ' s' : sec + ' s') + ' remaining';
 }
-function renderProcSteps(stage) {
+function renderProcSteps(stage, overall) {
   const idx = STAGE_ORDER.indexOf(stage);
   $('procSteps').innerHTML = STAGE_ORDER.map((st, i) =>
     '<div class="pstep ' + (i < idx || stage === 'done' ? 'done' : i === idx ? 'act' : '') + '">' +
     '<span class="ring"></span><span class="lbl">' + STAGE_NAMES[st] + '</span></div>').join('');
-  drawProcRing(stage === 'done' ? 1 : Math.max(0, idx) / (STAGE_ORDER.length - 1));
+  drawProcRing(overall != null ? overall : 0);   // the SAME number as the bar below it
 }
 function drawProcRing(frac) {
   const R = 78, CIRC = 2 * Math.PI * R;
@@ -32,26 +32,73 @@ function drawProcRing(frac) {
     '</svg>';
 }
 let lastMsgStage = null;
+// Every poll belongs to one "generation". Leaving the screen (or starting another poll)
+// bumps it, so a response that lands late can never repaint a screen that moved on.
+let pollGen = 0;
+function stopPoll() { clearInterval(pollTimer); pollGen++; }
+const STALL_MS = 10 * 60 * 1000;   // no progress for this long -> say so instead of spinning forever
+
+function setProcView(failed) {
+  $('procWork').style.display = failed ? 'none' : '';
+  $('procFail').style.display = failed ? '' : 'none';
+  $('procTitle').textContent = failed ? 'This session needs attention' : 'Analyzing your match';
+}
+// A failed session used to toast and bounce Home, leaving no way to retry. Show what
+// went wrong and the actions that can actually fix it.
+function showFailed(s) {
+  stopPoll();
+  lastSession = s;   // the Replace-video flow reads the match type from here
+  show('proc');
+  setProcView(true);
+  $('procErr').textContent = s.error || 'Something went wrong while processing this video.';
+  const ingestFailed = s.stage === 'ingest';
+  $('procFixBtns').innerHTML = ingestFailed
+    ? '<button onclick="document.getElementById(\'mReuploadFile\').click()">Replace video</button>'
+    : '<button onclick="startCalib(' + JSON.stringify((s.meta && s.meta.match_type) || null).replace(/"/g, '&quot;') + ')">Recalibrate</button>' +
+      '<button class="ghost" onclick="reanalyze()">Re-analyze</button>';
+  $('procFixBtns').insertAdjacentHTML('beforeend', '<button class="ghost" onclick="goHome()">Back</button>');
+}
+// One place decides which screen a session belongs on, for every way of arriving at it.
+function routeSession(s) {
+  if (s.state === 'error') return showFailed(s);
+  if (s.stage === 'done' && s.metrics) return showResults(s);
+  if (s.stage === 'ingest' && s.state === 'done') return startCalib(s.meta && s.meta.match_type);
+  if (s.stage === 'done') return showFailed({...s, error: 'The analysis finished without producing results. Re-analyze to rebuild them.'});
+  lastMsgStage = null; stopPoll(); setProcView(false); show('proc');
+  renderProcSteps(s.stage, s.overall);
+  // ingest finishing is the end of the road until the user calibrates; analysis ends at 'done'
+  waitFor(x => x.stage === 'done' || (x.stage === 'ingest' && x.state === 'done'), routeSession, 'Analyzing');
+}
+
 function waitFor(pred, then, label, quiet) {
   clearInterval(pollTimer);
+  const gen = ++pollGen, mySid = sid;
+  let lastKey = '', lastChange = Date.now();
   const tick = async () => {
     let s;
-    try { s = await api('/session/' + sid); } catch (e) { return; }
-    if (s.state === 'error') { clearInterval(pollTimer); toast(label + ' failed: ' + (s.error || 'unknown error'), true); goHome(); return; }
+    try { s = await api('/session/' + mySid); } catch (e) { return; }   // offline banner covers it
+    if (gen !== pollGen || sid !== mySid) return;
+    if (s.state === 'error') { stopPoll(); showFailed(s); return; }
     if (!quiet) {
+      setProcView(false);
       if (s.stage !== lastMsgStage) {
         lastMsgStage = s.stage;
         const m = $('procMsg');
         m.classList.add('swap');
         setTimeout(() => { m.textContent = (STAGE_FLAVOR[s.stage] || 'Working…'); m.classList.remove('swap'); }, 280);
-        renderProcSteps(s.stage);
       }
+      renderProcSteps(s.stage, s.overall || 0);
       const pct = Math.round(100 * (s.overall || 0));
       $('procBar').style.width = pct + '%';
       $('procPct').textContent = pct + '%';
-      $('procEta').textContent = s.eta_seconds != null ? fmtEta(s.eta_seconds) : '';
+      const key = s.stage + ':' + pct;
+      if (key !== lastKey) { lastKey = key; lastChange = Date.now(); }
+      let eta = s.eta_seconds != null ? fmtEta(s.eta_seconds) : '';
+      if (s.stage === 'queued' && s.queue_position) eta = s.queue_position === 1 ? 'You\'re next' : (s.queue_position - 1) + ' ahead of you';
+      if (Date.now() - lastChange > STALL_MS) eta = 'Taking longer than expected — it is still running. You can leave and come back.';
+      $('procEta').textContent = eta;
     }
-    if (pred(s)) { clearInterval(pollTimer); then(s); }
+    if (pred(s)) { stopPoll(); then(s); }
   };
   tick();
   pollTimer = setInterval(tick, 1500);

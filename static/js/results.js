@@ -1,6 +1,12 @@
 'use strict';
 /* ---------------- results ---------------- */
 function esc(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// A missing value renders as an em dash, never as the words "null"/"undefined"/"NaN".
+function nz(v, suffix, digits) {
+  if (v == null || (typeof v === 'number' && !isFinite(v))) return '<span class="mut">—</span>';
+  const x = (digits != null && typeof v === 'number') ? v.toFixed(digits) : v;
+  return x + (suffix ? '<small>' + suffix + '</small>' : '');
+}
 function statCard(v, l) { return '<div class="stat"><div class="v">' + v + '</div><div class="l">' + l + '</div></div>'; }
 const warnSVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
 const tipSVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>';
@@ -12,7 +18,7 @@ function animateBars(container) {
 }
 
 async function showResults(s) {
-  clearInterval(pollTimer);
+  stopPoll();
   lastSession = s;
   const m = s.metrics;
   const morph = portalFrom && !matchMedia('(prefers-reduced-motion:reduce)').matches;
@@ -30,19 +36,20 @@ async function showResults(s) {
   fillMeta(s.meta);
   if (!m) { $('stats').innerHTML = '<div class="empty">No metrics yet for this session.</div>'; return; }
   $('metricWarn').innerHTML = (m.warnings || []).map(w => '<div class="caveat red" style="margin-bottom:10px">' + warnSVG + '<span>' + esc(w) + '</span></div>').join('');
+  const zp = m.zone_pct || {};
   $('stats').innerHTML =
-    statCard(m.zone_pct.kitchen + '<small>%</small>', 'time at kitchen line') +
-    statCard(Math.round(m.distance_ft).toLocaleString() + '<small> ft</small>', 'distance covered') +
-    statCard(m.avg_speed_ft_s + '<small> ft/s</small>', 'avg movement speed') +
-    statCard(Math.round(m.active_seconds / 60) + '<small> min</small>', 'time analyzed') +
-    statCard(m.coverage_pct + '<small>%</small>', 'court coverage') +
-    statCard(m.median_dist_from_net_ft + '<small> ft</small>', 'median dist from net');
+    statCard(nz(zp.kitchen, '%'), 'time at kitchen line') +
+    statCard(nz(m.distance_ft == null ? null : Math.round(m.distance_ft).toLocaleString(), ' ft'), 'distance covered') +
+    statCard(nz(m.avg_speed_ft_s, ' ft/s'), 'avg movement speed') +
+    statCard(nz(m.active_seconds == null ? null : Math.round(m.active_seconds / 60), ' min'), 'time analyzed') +
+    statCard(nz(m.coverage_pct, '%'), 'court coverage') +
+    statCard(nz(m.median_dist_from_net_ft, ' ft'), 'median dist from net');
   animateStats($('stats'));
   const zoneLabel = { kitchen: 'kitchen line', transition: "no-man's land", baseline: 'baseline' };
   $('zones').innerHTML = ['kitchen','transition','baseline'].map(z =>
     '<div class="bar"><span class="lb">' + zoneLabel[z] + '</span>' +
-    '<div class="track"><div class="fill" data-w="' + m.zone_pct[z] + '%" style="background:' + (z==='transition' ? 'var(--amber)' : 'var(--accent)') + '"></div></div>' +
-    '<span class="val">' + m.zone_pct[z] + '%</span></div>').join('');
+    '<div class="track"><div class="fill" data-w="' + (zp[z] || 0) + '%" style="background:' + (z==='transition' ? 'var(--amber)' : 'var(--accent)') + '"></div></div>' +
+    '<span class="val">' + nz(zp[z], '%') + '</span></div>').join('');
   animateBars($('zones'));
   drawHeatmap(m, true);
   drawMovementCurve(m.movement_curve);
@@ -67,7 +74,7 @@ function renderDupr(d) {
   }
   const conf = Math.round(d.confidence * 100);
   let isHigh = false;
-  try { const bs = (window._pcProg || []).map(p => p.dupr_band).filter(v => v != null); isHigh = bs.length > 1 && d.band >= Math.max.apply(null, bs); } catch(e){}
+  try { const bs = (window._pcProg || []).filter(p => p.session_id !== sid).map(p => p.dupr_band).filter(v => v != null); isHigh = bs.length > 0 && d.band > Math.max.apply(null, bs); } catch(e){}
   const R = 26, CIRC = 2 * Math.PI * R;
   body.innerHTML =
     '<div class="heroflex">' +

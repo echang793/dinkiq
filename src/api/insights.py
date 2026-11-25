@@ -240,6 +240,9 @@ def synergy(sid: str):
     m = read_artifact(sdir, "metrics.json")
     if m.get("match_type") != "doubles" or m.get("partner_track_id") is None:
         return {"available": False, "reason": "singles session — no partner to compare"}
+    if m.get("partner_track_id") == m.get("subject_track_id"):
+        return {"available": False,
+                "reason": "partner tap resolved to you — recalibrate and tap your partner to get a partner report"}
     tracks_f, calib_f = sdir / "tracks.parquet", sdir / "calibration.json"
     if not tracks_f.exists() or not calib_f.exists():
         return {"available": False, "reason": "tracking data not available"}

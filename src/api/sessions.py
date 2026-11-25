@@ -140,8 +140,13 @@ def patch_meta(sid: str, patch: MetaPatch):
     sdir = get_session_dir(sid)
     meta_f = sdir / "meta.json"
     meta = load_json(meta_f)
-    for k, v in patch.model_dump(exclude_none=True).items():
-        meta[k] = v
+    # exclude_unset, not exclude_none: a field the client sent as null is "clear this",
+    # a field it never sent is "leave it alone" -- the two used to be indistinguishable
+    for k, v in patch.model_dump(exclude_unset=True).items():
+        if v is None:
+            meta.pop(k, None)
+        else:
+            meta[k] = v
     atomic_write_json(meta_f, meta)
     return meta
 

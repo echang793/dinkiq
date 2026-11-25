@@ -25,7 +25,7 @@ function startCalib(mt) {
   // meta.match_type in hand should pass it so the right calibration steps
   // (partner click, for doubles) actually render.
   if (mt) setMatchType(mt);
-  clearInterval(pollTimer);
+  stopPoll();
   show('calib'); calClicks = [];
   calImg = new Image();
   calImg.onload = () => {
@@ -139,14 +139,10 @@ async function submitCal() {
       body: JSON.stringify(body),
     });
   } catch (e) { toast('Calibration failed: ' + e, true); return; }
-  lastMsgStage = null;
-  show('proc'); renderProcSteps('queued');
-  waitFor(s => s.stage === 'done', showResults, 'Analyzing');
+  routeSession({session_id: sid, stage: 'queued', state: 'queued', overall: 0});
 }
 async function reanalyze() {
   try { await api('/session/' + sid + '/reprocess', { method: 'POST' }); }
   catch (e) { toast('Could not re-analyze: ' + e, true); return; }
-  lastMsgStage = null;
-  show('proc'); renderProcSteps('queued');
-  waitFor(s => s.stage === 'done', showResults, 'Re-analyzing');
+  routeSession({session_id: sid, stage: 'queued', state: 'queued', overall: 0});
 }

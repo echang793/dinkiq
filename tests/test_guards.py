@@ -353,3 +353,21 @@ def test_csv_export_leaves_ordinary_text_alone():
     import io
     row = next(csv.DictReader(io.StringIO(client.get("/api/sessions/export.csv").text)))
     assert row["label"] == "Sat league - wk 4" and row["opponent"] == "Sam"
+
+
+# ── an explicit null clears a field; an omitted field is left alone ─────
+
+def test_null_clears_known_dupr_and_context():
+    _mk("clr1", meta={"filename": "f.mp4", "known_dupr": 4.0, "context": "league", "label": "keep me"})
+    r = client.patch("/api/session/clr1/meta", json={"known_dupr": None, "context": None})
+    assert r.status_code == 200
+    body = r.json()
+    assert "known_dupr" not in body and "context" not in body
+    assert body["label"] == "keep me"                       # untouched: not in the request
+    assert "known_dupr" not in client.get("/api/session/clr1").json()["meta"]
+
+
+def test_omitted_fields_are_not_cleared():
+    _mk("clr2", meta={"filename": "f.mp4", "known_dupr": 4.0, "context": "league"})
+    r = client.patch("/api/session/clr2/meta", json={"label": "x"})
+    assert r.json()["known_dupr"] == 4.0 and r.json()["context"] == "league"

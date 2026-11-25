@@ -120,8 +120,12 @@
   <section class="screen" id="proc">
     <span class="back" onclick="goHome()" tabindex="0" role="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg> Sessions (keeps running)</span>
     <div class="card">
-      <h2>Analyzing your match</h2>
-      <div class="procwrap">
+      <h2 id="procTitle">Analyzing your match</h2>
+      <div id="procFail" style="display:none">
+        <div class="caveat red" role="alert"><span id="procErr"></span></div>
+        <div class="btnrow" id="procFixBtns" style="display:flex;flex-wrap:wrap;gap:9px;margin-top:14px"></div>
+      </div>
+      <div class="procwrap" id="procWork">
         <div class="procring" id="procRing"></div>
         <div>
           <div class="procmsg" id="procMsg">Warming up…</div>
@@ -231,7 +235,7 @@
       <h2>Rallies</h2>
       <div class="grid" id="rallyStats"></div>
       <div id="rallyList" style="margin-top:16px"></div>
-      <video id="rallyVideo" controls></video>
+      <video id="rallyVideo" controls playsinline preload="metadata"></video>
     </div>
     <div class="card">
       <h2>Points &amp; outcomes</h2>
@@ -261,8 +265,8 @@
     </div>
     <div class="card">
       <div class="metafields" style="margin-bottom:14px">
-        <input id="sFilterLabel" placeholder="search label…" style="width:180px" oninput="loadSessionsPage()">
-        <input id="sFilterOpponent" placeholder="search opponent…" style="width:160px" oninput="loadSessionsPage()">
+        <input id="sFilterLabel" placeholder="search label…" style="width:180px" oninput="loadSessionsPageSoon()">
+        <input id="sFilterOpponent" placeholder="search opponent…" style="width:160px" oninput="loadSessionsPageSoon()">
         <input id="sFilterFrom" type="date" title="played on/after" onchange="loadSessionsPage()">
         <input id="sFilterTo" type="date" title="played on/before" onchange="loadSessionsPage()">
         <select id="sFilterContext" onchange="loadSessionsPage()">
@@ -293,8 +297,8 @@
         <button class="ghost sm" onclick="playBothClips()">▶ Play both</button>
       </div>
       <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap">
-        <video id="clipCmpVideoA" controls style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
-        <video id="clipCmpVideoB" controls style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
+        <video id="clipCmpVideoA" controls playsinline style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
+        <video id="clipCmpVideoB" controls playsinline style="flex:1;min-width:260px;background:#000;border-radius:8px"></video>
       </div>
     </div>
   </section>

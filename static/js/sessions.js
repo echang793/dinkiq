@@ -55,8 +55,10 @@ async function loadCoverage(list) {
   } catch(e){}
 }
 function openCoverage(){ if (covSid) openSession(covSid); }
-function fmtDate(ts){ if (!ts) return ''; const d = new Date(ts * 1000); return d.toISOString().slice(0, 10); }
-function selectedIds(){ return [...document.querySelectorAll('.selBox:checked')].map(b => b.value); }
+// local calendar date: toISOString() is UTC, so an evening session was labelled tomorrow
+function fmtDate(ts){ if (!ts) return ''; const d = new Date(ts * 1000); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+// Home and the Sessions page both render checkboxes; only the ones on screen count
+function selectedIds(){ return [...document.querySelectorAll('.selBox:checked')].filter(b => b.offsetParent !== null).map(b => b.value); }
 let delArmed = false, delTimer = null;
 function updateDelBtn() {
   const n = selectedIds().length;
@@ -177,16 +179,21 @@ async function openSession(id) {
     const row = t && t.closest && t.closest('.sess,.strow,.card');
     portalFrom = row ? row.getBoundingClientRect() : null;
   } catch(e) { portalFrom = null; }
+  const gen = ++openGen;
   let s;
   try { s = await api('/session/' + id); } catch (e) { toast('Could not open session: ' + e, true); return; }
-  if (s.stage === 'done' && s.metrics) showResults(s);
-  else if (s.stage === 'ingest' && s.state === 'done') startCalib(s.meta && s.meta.match_type);
-  else if (s.state === 'error') toast('Session failed: ' + (s.error || 'unknown'), true);
-  else { lastMsgStage = null; show('proc'); renderProcSteps(s.stage); waitFor(x => x.stage === 'done', showResults, 'Analyzing'); }
+  if (gen !== openGen) return;   // a later tap won; don't let this slower reply paint over it
+  routeSession(s);
 }
+let openGen = 0;
 
 /* ---------------- Sessions page ---------------- */
+// typing in a filter used to fire one request per keystroke, and a slow early reply could
+// land after a later one and show the wrong list
+let sessPageTimer = null, sessPageGen = 0;
+function loadSessionsPageSoon() { clearTimeout(sessPageTimer); sessPageTimer = setTimeout(loadSessionsPage, 250); }
 async function loadSessionsPage() {
+  const gen = ++sessPageGen;
   const q = new URLSearchParams();
   const fLabel = $('sFilterLabel'), fOpp = $('sFilterOpponent'), fFrom = $('sFilterFrom'), fTo = $('sFilterTo'), fCtx = $('sFilterContext');
   if (fLabel && fLabel.value) q.set('label', fLabel.value);
@@ -197,6 +204,7 @@ async function loadSessionsPage() {
   const qs = q.toString();
   let list;
   try { list = await api('/sessions' + (qs ? '?' + qs : '')); } catch (e) { return; }
+  if (gen !== sessPageGen) return;
   window._pcSessions = list;
   disarmDelete();
   $('sessCount').textContent = list.length ? (list.length + (list.length === 1 ? ' session' : ' sessions')) : 'No sessions yet';

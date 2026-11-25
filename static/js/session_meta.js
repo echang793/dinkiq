@@ -52,21 +52,18 @@ function fillMeta(meta) {
   loadHeadToHead();
 }
 async function saveMeta() {
-  // label/player/opponent/played_at/notes are sent unconditionally (even
-  // empty) so clearing a field back out actually clears it — the old
-  // truthy-guard meant an emptied input silently kept its previous saved
-  // value forever. known_dupr/context are left guarded: the backend can't
-  // yet tell "clear this" from "leave alone" for a number or a validated
-  // enum the way it can for plain text (empty string just stays valid text).
+  // Every field is sent every time. Text fields clear with "", the number and the enum
+  // clear with an explicit null (the server treats null as "clear", absent as "leave alone").
+  const dupr = $('mDupr').value.trim();
   const body = {
     label: $('mLabel').value,
     player: $('mPlayer').value,
     opponent: $('mOpponent').value,
     played_at: $('mDate').value,
     notes: $('mNotes').value,
+    known_dupr: dupr === '' ? null : parseFloat(dupr),
+    context: $('mContext').value || null,
   };
-  if ($('mDupr').value) body.known_dupr = parseFloat($('mDupr').value);
-  if ($('mContext').value) body.context = $('mContext').value;
   try {
     await api('/session/' + sid + '/meta', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     $('mSaved').classList.add('on');
@@ -105,7 +102,7 @@ async function doReupload() {
   // same chunked, resumable path as a first upload (the old single multipart
   // POST had no progress, no retry and no size limit)
   lastMsgStage = null;
-  show('proc'); renderProcSteps('ingest');
+  setProcView(false); show('proc'); renderProcSteps('ingest', 0);
   $('procMsg').textContent = 'Uploading replacement video…';
   $('procEta').textContent = '';
   resumableUpload(f, mt || 'singles', () => {

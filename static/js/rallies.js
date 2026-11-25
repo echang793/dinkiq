@@ -31,7 +31,9 @@ async function loadSynergy() {
   const card = $('synergyCard');
   if (DEMO) { card.style.display = 'none'; return; }
   let syn;
+  const mySid = sid;
   try { syn = await api('/session/' + sid + '/synergy'); } catch (e) { card.style.display = 'none'; return; }
+  if (sid !== mySid) return;   // user opened another session while this was in flight
   if (!syn || !syn.available) { card.style.display = 'none'; return; }
   card.style.display = 'block';
   $('synergyStats').innerHTML =
@@ -70,19 +72,20 @@ function drawBallTrajectory(img, bounces) {
 
 function renderRallies(ev) {
   const list = $('rallyList'), v = $('rallyVideo');
-  v.style.display = 'none'; v.removeAttribute('src');
+  list.before(v);   // playClip parks the player inside the list; rebuilding the list would destroy it
+  v.pause(); v.style.display = 'none'; v.removeAttribute('src');
   if (!ev || !ev.rally_count) {
     $('rallyStats').innerHTML = '';
     list.innerHTML = '<div class="empty">No rallies detected' + (ev && ev.note ? ' — ' + esc(ev.note) : '') + '.</div>';
     return;
   }
   $('rallyStats').innerHTML =
-    statCard(ev.rally_count, 'rallies') +
-    statCard(ev.subject_shots, 'your shots') +
-    statCard(ev.avg_rally_hits, 'avg hits / rally') +
-    statCard(ev.max_rally_hits, 'longest rally') +
-    statCard(ev.avg_rally_seconds + '<small> s</small>', 'avg rally length') +
-    statCard(ev.play_time_pct + '<small>%</small>', 'time in play');
+    statCard(nz(ev.rally_count), 'rallies') +
+    statCard(nz(ev.subject_shots), 'your shots') +
+    statCard(nz(ev.avg_rally_hits), 'avg hits / rally') +
+    statCard(nz(ev.max_rally_hits), 'longest rally') +
+    statCard(nz(ev.avg_rally_seconds, ' s'), 'avg rally length') +
+    statCard(nz(ev.play_time_pct, '%'), 'time in play');
   animateStats($('rallyStats'));
   const notes = (lastSession && lastSession.meta && lastSession.meta.clip_notes) || {};
   list.innerHTML = ev.rallies.map((r, i) =>
@@ -113,7 +116,11 @@ async function correctPoint(idx, winner) {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ winner }) });
     toast('Rally ' + (idx + 1) + ' updated');
-    openSession(sid);
+    const fresh = await api('/session/' + sid);
+    if (lastSession && lastSession.session_id === sid) {
+      lastSession = {...lastSession, points: fresh.points};
+      renderPoints(fresh.points, lastSession.events);   // not openSession(): that re-renders everything and jumps the scroll
+    }
   } catch (e) { toast('Correction failed: ' + e, true); }
 }
 function fmtClock(s){ const m = Math.floor(s/60); return m + ':' + String(Math.floor(s%60)).padStart(2,'0'); }
@@ -200,7 +207,7 @@ function drawMovementCurve(curve) {
   const speeds = curve.map(p => p.avg_speed_ft_s);
   const maxS = Math.max(1, ...speeds), minS = Math.min(...speeds);
   const x = i => P + (i / (curve.length - 1)) * (Wd - P * 1.5);
-  const y = v => Hd - P + (1 - (v - minS) / Math.max(1e-6, maxS - minS)) * (Hd - P * 1.7);
+  const y = v => P * 0.7 + (1 - (v - minS) / Math.max(1e-6, maxS - minS)) * (Hd - P * 1.7);   // max near the top, min on the axis
   ctx.strokeStyle = V('--line2'); ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(P, Hd - P); ctx.lineTo(Wd - 10, Hd - P); ctx.stroke();
   ctx.strokeStyle = V('--accent'); ctx.lineWidth = 2.5; ctx.beginPath();

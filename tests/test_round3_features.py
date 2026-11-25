@@ -50,6 +50,24 @@ def test_synergy_singles_session_unavailable():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_synergy_is_unavailable_when_partner_is_the_subject():
+    """An older session can have partner_track_id == subject_track_id (the partner click
+    resolved to the same person). Comparing a player to themselves reports a meaningless
+    0 ft separation and a flattering-looking 100% overlap."""
+    d = _basic_session("syn_same")
+    (d / "metrics.json").write_text(json.dumps(
+        {"match_type": "doubles", "subject_track_id": 7, "partner_track_id": 7}))
+    (d / "calibration.json").write_text(json.dumps({"corners_px": CORNERS, "kitchen_px": None}))
+    pd.DataFrame(columns=["frame", "track_id", "x1", "y1", "x2", "y2", "conf", "lwx", "lwy", "rwx", "rwy"]
+                 ).to_parquet(d / "tracks.parquet", index=False)
+    try:
+        body = client.get(f"/api/session/{d.name}/synergy").json()
+        assert body["available"] is False
+        assert "partner" in body["reason"].lower()
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_synergy_doubles_computes_separation_and_overlap():
     d = _basic_session("syn_doubles")
     (d / "metrics.json").write_text(json.dumps({"match_type": "doubles", "partner_track_id": 7}))
