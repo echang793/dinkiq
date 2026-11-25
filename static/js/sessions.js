@@ -51,9 +51,13 @@ function updateDelBtn() {
   if (!delArmed) b.textContent = n ? 'Delete selected (' + n + ')' : 'Delete selected';
   const c = $('cmpBtn'); if (c) { c.disabled = n < 2; c.textContent = n >= 2 ? 'Compare ' + n : 'Compare'; }
 }
-async function compareClicked() {
+function compareClicked() {
   const ids = selectedIds();
-  if (ids.length < 2) return;
+  if (ids.length >= 2) nav('#/compare?ids=' + ids.map(encodeURIComponent).join(','));
+}
+async function viewCompare(ids) {
+  if (ids.length < 2) { nav('#/sessions'); return; }
+  stopPoll();
   show('compare');
   $('cmpBody').innerHTML = '<div class="empty">Comparing…</div>';
   $('clipCmpCard').style.display = 'none';
@@ -156,16 +160,27 @@ async function deleteClicked() {
   } catch (e) { toast('Delete failed: ' + e, true); }
   loadSessions(); loadTrend();
 }
-async function openSession(id) {
-  sid = id;
+// A tap on a row/card: remember where it was (for the portal morph), then change the route
+function openSession(id) {
   try {
     const t = window.event && window.event.target;
     const row = t && t.closest && t.closest('.sess,.strow,.card');
     portalFrom = row ? row.getBoundingClientRect() : null;
   } catch(e) { portalFrom = null; }
+  nav('#/s/' + encodeURIComponent(id));
+}
+async function viewSession(id) {
+  sid = id;
+  stopPoll();
   const gen = ++openGen;
   let s;
-  try { s = await api('/session/' + id); } catch (e) { toast('Could not open session: ' + e, true); return; }
+  try { s = await api('/session/' + id); }
+  catch (e) {
+    if (gen !== openGen) return;
+    toast('Could not open session: ' + e, true);
+    history.replaceState(null, '', '#/');   // a dead link must not trap the back button
+    viewHome(); return;
+  }
   if (gen !== openGen) return;   // a later tap won; don't let this slower reply paint over it
   routeSession(s);
 }

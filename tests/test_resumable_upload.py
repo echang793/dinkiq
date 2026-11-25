@@ -175,3 +175,18 @@ def test_finish_surfaces_capture_hint(monkeypatch):
             (pipeline.SESSIONS / sid / "meta.json").read_text())
     finally:
         _cleanup(sid=sid, upload_id=uid)
+
+
+def test_cancel_removes_the_partial_and_frees_its_slot():
+    uid = _init()
+    client.put(f"/api/upload/{uid}?offset=0", content=b"x" * 1000)
+    assert client.get(f"/api/upload/{uid}").json()["offset"] == 1000
+    r = client.delete(f"/api/upload/{uid}")
+    assert r.status_code == 200 and r.json() == {"ok": True}
+    assert client.get(f"/api/upload/{uid}").status_code == 404
+    assert client.delete(f"/api/upload/{uid}").status_code == 200      # idempotent: a retry is not an error
+
+
+def test_cancel_rejects_a_malformed_id():
+    assert client.delete("/api/upload/../../etc").status_code in (400, 404, 405)
+    assert client.delete("/api/upload/not-hex").status_code == 400

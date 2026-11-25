@@ -47,6 +47,9 @@ server refuse early: `413` over 2 GB, `507` if it won't fit with a 2 GB disk res
 → `{upload_id, offset}` — bytes stored so far; ask this after a dropped connection.
 `404` unknown/expired (partials expire after 24 h).
 
+### `DELETE /upload/{upload_id}`
+Cancel: removes the partial and frees its slot → `{ok: true}` (idempotent; `400` bad id).
+
 ### `PUT /upload/{upload_id}`
 Query `offset` (must equal the server's offset), raw bytes as the body → `{upload_id, offset}`.
 `409` on an offset mismatch (`detail` carries the true offset — re-slice and continue),

@@ -130,6 +130,14 @@ def upload_status(upload_id: str):
     return {"upload_id": upload_id, "offset": part.stat().st_size}
 
 
+@router.delete("/api/upload/{upload_id}")
+def upload_cancel(upload_id: str):
+    """Abandon an upload and free its slot now, instead of waiting for the sweep."""
+    _upload_part(upload_id).unlink(missing_ok=True)
+    _upload_locks.pop(upload_id, None)
+    return {"ok": True}
+
+
 @router.put("/api/upload/{upload_id}")
 async def upload_chunk(upload_id: str, request: Request, offset: int = 0):
     """Append one chunk. `offset` must equal what we already hold, so a

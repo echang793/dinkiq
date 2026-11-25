@@ -189,7 +189,7 @@ function show(id, instant) {
     window.scrollTo({ top: 0 });
   };
   const reduce = noMotion();
-  if (instant || !document.startViewTransition || reduce || document.hidden) { doSwap(); return; }
+  if (instant || !booted || !document.startViewTransition || reduce || document.hidden) { doSwap(); return; }
   viewTransition(doSwap, () => {
     document.documentElement.animate(
       [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-16px) scale(.995)' }],
@@ -199,8 +199,28 @@ function show(id, instant) {
       { duration: 480, easing: 'cubic-bezier(.22,1,.36,1)', pseudoElement: '::view-transition-new(root)' });
   });
 }
-function goHome() { stopPoll(); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
-function goSessions() { stopPoll(); show('sessions'); loadSessionsPage(); }
-function goTrends() { stopPoll(); show('trends'); loadTrendsPage(); }
+/* ---------------- routes ----------------
+   #/ home · #/s/<id> a session (whatever screen its state calls for) · #/sessions · #/trends ·
+   #/compare?ids=a,b,c. The hash is the source of truth: back/forward, reload and shared links all
+   land where they should; the go*() helpers just change the hash. */
+let booted = false;
+function nav(h) { if (location.hash === h || (h === '#/' && !location.hash)) route(); else location.hash = h; }
+function goHome() { nav('#/'); }
+function goSessions() { nav('#/sessions'); }
+function goTrends() { nav('#/trends'); }
+function viewHome() { stopPoll(); show('home'); loadSessions(); loadTrend(); loadFocusReminder(); }
+function viewSessions() { stopPoll(); show('sessions'); loadSessionsPage(); }
+function viewTrends() { stopPoll(); show('trends'); loadTrendsPage(); }
+function route() {
+  if (typeof setCalFull === 'function') setCalFull(false);
+  const [path, qs] = (location.hash || '#/').slice(1).split('?');
+  const parts = path.split('/').filter(Boolean), q = new URLSearchParams(qs || '');
+  if (parts[0] === 's' && parts[1]) return viewSession(decodeURIComponent(parts[1]));
+  if (parts[0] === 'sessions') return viewSessions();
+  if (parts[0] === 'trends') return viewTrends();
+  if (parts[0] === 'compare') return viewCompare((q.get('ids') || '').split(',').filter(Boolean));
+  return viewHome();
+}
+addEventListener('hashchange', route);
 function toggleNavMore(e) { e.stopPropagation(); $('navMorePanel').classList.toggle('open'); }
 document.addEventListener('click', () => { const p = $('navMorePanel'); if (p) p.classList.remove('open'); });

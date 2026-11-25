@@ -32,4 +32,5 @@ function attachTilt(el) {
 buildRibbon();
 attachTilt(document.querySelector('.figcard'));
 applySkin(localStorage.getItem('pc_skin') || 'night');
-loadSessions(); loadTrend(); loadFocusReminder();
+route();
+booted = true;

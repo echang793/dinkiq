@@ -61,7 +61,7 @@
         <div class="big" id="dropTitle">Drop your match film here</div>
         <div class="sub" id="dropSub">or click to choose · MP4 / MOV / M4V · up to 2 GB</div>
         <div class="upbar" id="upBarWrap" style="display:none"><i id="upBar"></i></div>
-        <div class="upmeta" id="upMeta" style="display:none"><span id="upName"></span><span><b id="upPct">0%</b> <span id="upMb"></span></span></div>
+        <div class="upmeta" id="upMeta" style="display:none"><span id="upName"></span><span><b id="upPct">0%</b> <span id="upMb"></span> <button class="ghost sm" id="upCancel" onclick="event.stopPropagation(); cancelUpload()">Cancel</button></span></div>
       </div>
       <input type="file" id="file" accept=".mp4,.mov,.m4v" style="display:none">
       <div id="upWarn"></div>
