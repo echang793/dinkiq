@@ -26,9 +26,10 @@ def notify_message(sdir: Path, ok: bool, error: str | None = None,
     parts = [f"✅ DinkIQ: {label} finished analyzing."]
     dupr = load_json(sdir / "dupr.json")
     if dupr.get("band") is not None:
-        line = f"Plays like ~{dupr['band']} DUPR"
+        line = f"Play resembles ~{dupr['band']} DUPR"
         if dupr.get("confidence") is not None:
-            line += f" ({dupr['confidence']:.0%} confidence)"
+            level = "low" if dupr["confidence"] < 0.4 else "medium" if dupr["confidence"] < 0.7 else "high"
+            line += f" ({level} confidence)"
         parts.append(line)
     public = os.environ.get("DINKIQ_PUBLIC_URL", "").strip().rstrip("/")
     if public:

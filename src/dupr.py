@@ -15,6 +15,12 @@ from pathlib import Path
 import numpy as np
 
 BAND_MIN, BAND_MAX = 2.5, 5.0
+# What the rubric can distinguish: 2.5-5.0. A stronger player reads 5.0 too; that is
+# reported (at_ceiling) rather than extended with invented anchors above it.
+
+MIN_ACTIVE_SECONDS = 45     # tracked time below which no level is claimed
+MIN_TYPED_SHOTS = 6         # classified shots needed before "variety" means anything
+MIN_SHOTS_PER_TYPE = 3      # a type counts only once it has shown up this many times
 
 # Each dimension: weight + (metric_value, band) anchor points, monotone in value.
 RUBRIC: dict[str, dict] = {
@@ -79,20 +85,39 @@ def interp_band(value: float, anchors: list[tuple[float, float]]) -> float:
     return float(np.clip(np.interp(value, xs, ys), BAND_MIN, BAND_MAX))
 
 
-def next_anchor_target(value: float, anchors: list[tuple[float, float]]) -> tuple[float, float] | None:
+def next_anchor_target(value: float, anchors: list[tuple[float, float]],
+                       current_band: float | None = None) -> tuple[float, float] | None:
     """The nearest better anchor above `value`'s current position — a
     concrete "reach X to hit the next tier" number, not just a score.
     None once `value` is at or past the top anchor (nothing further this
     rubric can distinguish). Anchors may run in decreasing metric order
     (lower-is-better dimensions like positioning), same convention as
-    interp_band."""
+    interp_band.
+
+    With `current_band`, only anchors that are a genuinely higher BAND count: a value
+    below the first anchor already reads as the floor band, and the "next" anchor can
+    carry that same band (2.2 hits -> "reach 3 hits for 2.5", which you already are)."""
     xs = [a[0] for a in anchors]
     decreasing = xs[0] > xs[-1]
     if not decreasing:
         better = [(x, y) for x, y in anchors if x > value + 1e-9]
-        return min(better, key=lambda p: p[0]) if better else None
-    better = [(x, y) for x, y in anchors if x < value - 1e-9]
-    return max(better, key=lambda p: p[0]) if better else None
+    else:
+        better = [(x, y) for x, y in anchors if x < value - 1e-9]
+    if current_band is not None:
+        better = [(x, y) for x, y in better if y > current_band + 1e-9]
+    if not better:
+        return None
+    return min(better, key=lambda p: p[0]) if not decreasing else max(better, key=lambda p: p[0])
+
+
+def range_half_width(confidence: float) -> float:
+    """Half the width of the shown range, in quarter bands: +-0.25 when confident, up to
+    +-1.25 when almost nothing is known. A point value hid how little was behind it."""
+    return round((0.25 + (1.0 - confidence)) / 0.25) * 0.25
+
+
+def confidence_level(confidence: float) -> str:
+    return "low" if confidence < 0.4 else "medium" if confidence < 0.7 else "high"
 
 
 def extract_dimension_values(metrics: dict, events: dict, shots: dict) -> dict[str, float]:
@@ -106,24 +131,34 @@ def extract_dimension_values(metrics: dict, events: dict, shots: dict) -> dict[s
         vals["rally_sustain"] = float(events["avg_rally_hits"])
     if shots.get("available"):
         mix = shots.get("shot_mix", {})
-        vals["shot_variety"] = float(sum(1 for k in ("drive", "dink", "drop") if mix.get(k)))
+        # zero detected shots used to score as "no variety" (band 2.5), and one glitch
+        # "drop" as a whole shot type: it must be measured, in enough volume
+        if sum(mix.values()) >= MIN_TYPED_SHOTS:
+            vals["shot_variety"] = float(sum(1 for k in ("drive", "dink", "drop")
+                                             if mix.get(k, 0) >= MIN_SHOTS_PER_TYPE))
         if shots.get("serves_measured", 0) >= 3:
             vals["serve_depth"] = float(shots["deep_serve_pct"])
     return vals
 
 
 def estimate(metrics: dict, events: dict, shots: dict,
-             calibration: dict | None = None) -> dict:
-    vals = extract_dimension_values(metrics, events, shots)
+             calibration: dict | None = None, hits: list[dict] | None = None) -> dict:
     caveats: list[str] = list(metrics.get("warnings", []))
+    if metrics.get("active_seconds", 0) < MIN_ACTIVE_SECONDS:
+        return {"available": False,
+                "reason": f"under {MIN_ACTIVE_SECONDS} s of the player was tracked — too little "
+                          "to say anything about level",
+                "caveats": caveats}
+    vals = extract_dimension_values(metrics, events, shots)
 
     dims = {}
     for name, spec in RUBRIC.items():
         if name in vals:
             anchors = active_anchors(name)
-            target = next_anchor_target(vals[name], anchors)
+            band_now = interp_band(vals[name], anchors)
+            target = next_anchor_target(vals[name], anchors, current_band=band_now)
             dims[name] = {"label": spec["label"], "value": round(vals[name], 1),
-                          "band": round(interp_band(vals[name], anchors), 2),
+                          "band": round(band_now, 2),
                           "weight": spec["weight"], "unit": spec["unit"],
                           "next_target_value": round(target[0], 1) if target else None,
                           "next_target_band": round(target[1], 2) if target else None}
@@ -136,11 +171,31 @@ def estimate(metrics: dict, events: dict, shots: dict,
     wsum = sum(d["weight"] for d in dims.values())
     band = sum(d["band"] * d["weight"] for d in dims.values()) / wsum
 
-    # confidence: starts from dimension coverage, docked for known accuracy risks
+    # confidence: starts from dimension coverage, then docked for each way the evidence is thin.
+    # A missing evidence field (older sessions) is not penalised as if it were bad.
     confidence = 0.30 + 0.65 * (wsum / sum(s["weight"] for s in RUBRIC.values()))
     if metrics.get("active_seconds", 0) < 300:
-        caveats.append("Short sample (<5 min of play) — estimate is volatile.")
-        confidence -= 0.15
+        caveats.append("Short sample (<5 min tracked) — estimate is volatile.")
+        confidence -= 0.10
+    rallies = events.get("rallies")
+    if rallies is not None:
+        live_s = sum(r.get("duration", 0.0) for r in rallies)
+        if live_s < 30:
+            caveats.append(f"Only {live_s:.0f} s of live play was detected — the level is inferred "
+                           "from very little actual rallying.")
+            confidence -= 0.15
+        elif live_s < 60:
+            confidence -= 0.08
+    if 0 < events.get("rally_count", 0) < 5 or (rallies is not None and not rallies):
+        confidence -= 0.08
+    if hits and len(hits) >= 6:
+        unknown = sum(1 for h in hits if h.get("hitter") == "unknown") / len(hits)
+        if unknown > 0.5:
+            caveats.append("Most paddle hits couldn't be attributed to a player, so shot and "
+                           "rally figures are unreliable.")
+            confidence -= 0.10
+    if metrics.get("identity_issues"):
+        confidence -= 0.10  # a player wasn't found where the tap was: partner/opponent stats suspect
     if calibration and any(p[0] < 0 or p[1] < 0 for p in calibration.get("corners_px", [])):
         caveats.append("Some court corners were estimated off-frame — "
                        "positioning accuracy is reduced.")
@@ -161,11 +216,28 @@ def estimate(metrics: dict, events: dict, shots: dict,
         confidence -= 0.25  # geometry broken: positioning dims untrustworthy
     confidence = round(float(np.clip(confidence, 0.05, 0.95)), 2)
 
+    snapped = round(round(band / 0.25) * 0.25, 2)  # quarter-band granularity
+    # "at the ceiling" = reads as the top band. (Not band >= 4.95: even flawless play scores
+    # ~4.93 because shot_variety's top anchor is 4.5, so that test could never fire.)
+    at_ceiling, at_floor = snapped >= BAND_MAX, snapped <= BAND_MIN
+    if at_ceiling:
+        caveats.append("This rubric tops out at about 5.0 — a stronger player would read the same.")
+    calibrated = CALIBRATED_PATH.exists()
+    if not calibrated:
+        caveats.append("Not yet calibrated against footage of players with known ratings — "
+                       "a rough resemblance, not a measurement.")
+    half = range_half_width(confidence)
     return {
         "available": True,
-        "band": round(round(band / 0.25) * 0.25, 2),  # quarter-band granularity
+        "band": snapped,
         "band_raw": round(band, 2),
+        "band_low": round(max(BAND_MIN, snapped - half), 2),
+        "band_high": round(min(BAND_MAX, snapped + half), 2),
         "confidence": confidence,
+        "confidence_level": confidence_level(confidence),
+        "calibrated": calibrated,
+        "at_ceiling": at_ceiling,
+        "at_floor": at_floor,
         "dimensions": dims,
         "caveats": caveats,
     }

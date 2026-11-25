@@ -77,10 +77,12 @@ def build_report_pdf(meta: dict, metrics: dict, events: dict, shots: dict,
 
     if dupr and dupr.get("available"):
         band = dupr["band"]
-        conf = int(round(dupr.get("confidence", 0) * 100))
+        lo, hi = dupr.get("band_low"), dupr.get("band_high")
+        rng = f" ({lo:g}&ndash;{hi:g})" if lo is not None and hi is not None else ""
+        level = dupr.get("confidence_level") or "low"
         story.append(Paragraph(f"~{band:g}", ss["Hero"]))
         story.append(Paragraph(
-            f"your play resembles this DUPR range &middot; {conf}% confidence",
+            f"your play resembles this DUPR level{rng} &middot; {level} confidence",
             ss["HeroLabel"]))
         story.append(Spacer(1, 10))
         dims = sorted(dupr.get("dimensions", {}).values(), key=lambda d: d["band"])

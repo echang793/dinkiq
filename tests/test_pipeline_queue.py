@@ -137,7 +137,8 @@ def test_notify_message_includes_result_and_deep_link(monkeypatch, tmp_path):
     msg = notify.notify_message(tmp_path, ok=True)
     assert "Tuesday league" in msg
     assert "~3.75 DUPR" in msg
-    assert "42% confidence" in msg
+    assert "medium confidence" in msg   # words, not a false-precision percentage
+    assert "resembles" in msg.lower()
     assert "https://host/app/dinkiq" in msg  # trailing slash normalized off
 
 

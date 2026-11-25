@@ -38,8 +38,10 @@ def render_stat_card(meta: dict, metrics: dict, events: dict,
 
     if dupr and dupr.get("available"):
         _center(d, 420, f"~{dupr['band']:g}", _font(220), ACCENT)
-        conf = int(round(dupr.get("confidence", 0) * 100))
-        _center(d, 660, f"estimated DUPR · {conf}% confidence", _font(24), MUTED)
+        lo, hi = dupr.get("band_low"), dupr.get("band_high")
+        rng = f" · range {lo:g}–{hi:g}" if lo is not None and hi is not None else ""
+        level = dupr.get("confidence_level") or "low"
+        _center(d, 660, f"resembles this DUPR level{rng} · {level} confidence", _font(24), MUTED)
     else:
         _center(d, 500, "Skill estimate unavailable", _font(30), MUTED)
 

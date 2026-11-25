@@ -374,6 +374,7 @@ def analyze(sdir: Path) -> None:
             load_json(sdir / "events.json"),
             load_json(sdir / "shots.json"),
             calibration=calib_data,
+            hits=load_json(sdir / "hits.json", default=[]),
         )
         rating["tips"] = coach_tips(rating)
         note = fatigue_note(m_final.get("movement_curve") or [])
