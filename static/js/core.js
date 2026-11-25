@@ -41,16 +41,27 @@ function applySkin(k){
 }
 function setSkin(k, ev){
   if (k === currentSkin()) return;
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
-  if (!document.startViewTransition || reduce) { applySkin(k); return; }
+  const reduce = noMotion();
+  if (!document.startViewTransition || reduce || document.hidden) { applySkin(k); return; }
   const x = ev ? ev.clientX : innerWidth - 60, y = ev ? ev.clientY : 30;
   const end = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
-  document.startViewTransition(() => applySkin(k)).ready.then(() => {
+  viewTransition(() => applySkin(k), () => {
     document.documentElement.animate(
       { clipPath: ['circle(0px at ' + x + 'px ' + y + 'px)', 'circle(' + end + 'px at ' + x + 'px ' + y + 'px)'] },
       { duration: 600, easing: 'cubic-bezier(.22,1,.36,1)', pseudoElement: '::view-transition-new(root)' }
     );
   });
+}
+
+// A view transition can be aborted (tab hidden, DOM update timeout); the update itself must
+// still happen exactly once, and the rejection must not surface as an unhandled error.
+function viewTransition(update, animate) {
+  let done = false;
+  const run = () => { if (!done) { done = true; update(); } };
+  const t = document.startViewTransition(run);
+  t.ready.then(animate).catch(run);
+  t.finished.catch(run);
+  t.updateCallbackDone.catch(run);   // all three promises reject when the transition is aborted
 }
 
 async function api(p, opt) {
@@ -66,6 +77,39 @@ async function api(p, opt) {
   return r.json();
 }
 function frameURL() { return DEMO ? demoFrameURL() : BASE + '/api/session/' + sid + '/frame?ts=' + Date.now(); }
+
+/* ---------------- settings (stored on this device) ---------------- */
+let prefs = {};
+try { prefs = JSON.parse(localStorage.getItem('pc_prefs')) || {}; } catch (e) { prefs = {}; }
+function savePrefs() { try { localStorage.setItem('pc_prefs', JSON.stringify(prefs)); } catch (e) {} applyPrefs(); }
+function me() { return (prefs.me || '').trim(); }
+// "?player=Eric" for the endpoints that scope to one player; empty until a name is set
+function playerQS(first) { return me() ? (first || '?') + 'player=' + encodeURIComponent(me()) : ''; }
+// Effects (particles, tilt, scanlines, stinger, count-ups): automatic = off for people who asked the OS
+// for reduced motion and on touch screens, where they cost battery and nobody hovers.
+function noMotion() {
+  if (prefs.fx === 'off') return true;
+  if (matchMedia('(prefers-reduced-motion:reduce)').matches) return true;
+  return prefs.fx !== 'on' && matchMedia('(pointer:coarse)').matches;
+}
+function applyPrefs() { document.documentElement.dataset.fx = noMotion() ? 'off' : 'on'; }
+applyPrefs();
+function openSettings() {
+  $('setMe').value = prefs.me || '';
+  $('setHand').value = prefs.hand || '';
+  $('setFx').value = prefs.fx || 'auto';
+  const d = $('settings');
+  if (d.showModal) d.showModal(); else d.setAttribute('open', '');
+}
+function closeSettings() { const d = $('settings'); if (d.close) d.close(); else d.removeAttribute('open'); }
+function saveSettings() {
+  const before = me();
+  prefs.me = $('setMe').value.trim().slice(0, 80);
+  prefs.hand = $('setHand').value || '';
+  prefs.fx = $('setFx').value === 'auto' ? '' : $('setFx').value;
+  savePrefs(); closeSettings(); toast('Settings saved');
+  if (me() !== before) { try { loadSessions(); loadTrend(); loadFocusReminder(); } catch (e) {} }
+}
 
 /* ---------------- connection banner ---------------- */
 let offline = false, offlineTimer = null;
@@ -111,7 +155,7 @@ function toast(msg, err) {
 /* ---------------- odometer count-up ---------------- */
 const ease3 = t => 1 - Math.pow(1 - t, 3);
 function animateStats(container) {
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const reduce = noMotion();
   container.querySelectorAll('.v').forEach(el => {
     if (el.dataset.anim === 'done') return;
     el.dataset.anim = 'done';
@@ -144,9 +188,9 @@ function show(id, instant) {
     ['navFilm','navSessions','navTrends'].forEach(n => { const e = $(n); if (e) e.classList.toggle('here', nav[id] === n); });
     window.scrollTo({ top: 0 });
   };
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
-  if (instant || !document.startViewTransition || reduce) { doSwap(); return; }
-  document.startViewTransition(doSwap).ready.then(() => {
+  const reduce = noMotion();
+  if (instant || !document.startViewTransition || reduce || document.hidden) { doSwap(); return; }
+  viewTransition(doSwap, () => {
     document.documentElement.animate(
       [{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateY(-16px) scale(.995)' }],
       { duration: 280, easing: 'cubic-bezier(.4,0,.7,.2)', pseudoElement: '::view-transition-old(root)' });

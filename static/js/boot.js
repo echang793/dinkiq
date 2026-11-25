@@ -11,7 +11,7 @@ function endBoot() {
 (function bootSeq() {
   const b = $('boot');
   if (!b) return;
-  if (localStorage.getItem('pc_booted') || matchMedia('(prefers-reduced-motion:reduce)').matches) { b.remove(); return; }
+  if (localStorage.getItem('pc_booted') || noMotion()) { b.remove(); return; }
   b.classList.add('go');
   setTimeout(endBoot, 2600);
 })();
@@ -20,9 +20,9 @@ function endBoot() {
 function attachTilt(el) {
   if (!el || el._tilt) return; el._tilt = true;
   el.classList.add('tilt');
-  el.addEventListener('pointerenter', () => { if (!matchMedia('(prefers-reduced-motion:reduce)').matches) el.style.animation = 'none'; });
+  el.addEventListener('pointerenter', () => { if (!noMotion()) el.style.animation = 'none'; });
   el.addEventListener('pointermove', e => {
-    if (matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+    if (noMotion()) return;
     const r = el.getBoundingClientRect();
     const rx = ((e.clientY - r.top) / r.height - .5) * -7, ry = ((e.clientX - r.left) / r.width - .5) * 7;
     el.style.transform = 'perspective(700px) rotateX(' + rx.toFixed(2) + 'deg) rotateY(' + ry.toFixed(2) + 'deg)';

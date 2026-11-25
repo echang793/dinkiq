@@ -123,7 +123,8 @@ Status fields + `meta` + whichever of `metrics`, `events`, `hits`, `shots`, `poi
 ### `PATCH /session/{sid}/meta`
 Any of `{label, played_at, known_dupr: 2.0–8.0, notes, opponent, player, context}` → merged
 meta. `played_at` must be a real `YYYY-MM-DD` (`""` clears it). `context` ∈
-`practice`|`league`|`tournament`. Fields set to `null` are ignored.
+`practice`|`league`|`tournament`. A field sent as `null` is **cleared** (removed from the meta —
+this is how `known_dupr` and `context` are unset); a field not sent is left alone.
 
 ### `PATCH /session/{sid}/points/{idx}`
 `{winner: "my_team"|"opp_team"|"unknown", unforced_error?}` — override a detected rally
@@ -186,7 +187,8 @@ are prefixed with `'` so a spreadsheet won't execute them.
 ## Trends and comparison
 
 ### `GET /progress`
-Completed sessions, oldest first:
+Completed sessions, oldest first. `?player=NAME` keeps only that player's footage (sessions with no
+`player` tag count as theirs; case-insensitive):
 ```json
 {"session_id":"abc","label":"Sat league","date":"2026-07-05","kitchen_pct":31.2,
  "transition_pct":24.0,"distance_ft":1204.5,"avg_rally_hits":6.1,"dupr_band":3.75,
@@ -212,7 +214,8 @@ History plus the opponent's shot-landing tendency: `{shots_tracked, side_counts,
 dominant_side, dominant_side_pct, ...}`.
 
 ### `GET /streak`
-Consecutive-day play streak, scoped to sessions whose `player` is unset or `"You"`:
+Consecutive-day play streak. `?player=NAME` scopes it to that player's sessions (untagged sessions
+count as theirs; case-insensitive); without it, sessions whose `player` is unset or `"You"`:
 `{current_streak_days, longest_streak_days, sessions_this_week, days_played}`.
 
 ### `GET /leaderboard`

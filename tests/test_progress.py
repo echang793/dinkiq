@@ -73,3 +73,34 @@ def test_progress_empty_when_no_sessions():
     r = client.get("/api/progress")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
+
+
+# ── "my" sessions: the default player filter ────────────────────────────
+
+def _tag(d: Path, player: str | None) -> None:
+    meta = json.loads((d / "meta.json").read_text())
+    if player is not None:
+        meta["player"] = player
+    (d / "meta.json").write_text(json.dumps(meta))
+
+
+def test_progress_player_filter_keeps_mine_and_untagged_drops_others():
+    _tag(_mk_done("pf_mine", "2026-07-01", 20.0, None), "Eric")
+    _mk_done("pf_old", "2026-07-02", 22.0, None)                     # predates the field: mine
+    _tag(_mk_done("pf_sam", "2026-07-03", 40.0, None), "Sam")
+
+    def ids(r):
+        return {p["session_id"] for p in r.json()}
+
+    assert ids(client.get("/api/progress")) == {"pf_mine", "pf_old", "pf_sam"}      # no filter: unchanged
+    assert ids(client.get("/api/progress", params={"player": "Eric"})) == {"pf_mine", "pf_old"}
+    assert ids(client.get("/api/progress", params={"player": "eric "})) == {"pf_mine", "pf_old"}   # case/space-insensitive
+
+
+def test_streak_uses_the_given_player():
+    import datetime
+    today = datetime.date.today().isoformat()
+    _tag(_mk_done("sk_eric", today, 20.0, None), "Eric")
+    _tag(_mk_done("sk_sam", today, 20.0, None), "Sam")
+    assert client.get("/api/streak", params={"player": "Eric"}).json()["days_played"] == 1
+    assert client.get("/api/streak", params={"player": "Nobody"}).json()["days_played"] == 0

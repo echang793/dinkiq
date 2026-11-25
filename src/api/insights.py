@@ -5,7 +5,7 @@ import datetime
 from fastapi import APIRouter, HTTPException
 
 import pipeline
-from api.common import DEFAULT_PLAYER_NAME, compare_summary, get_session_dir, read_artifact, iter_sessions
+from api.common import DEFAULT_PLAYER_NAME, belongs_to, compare_summary, get_session_dir, iter_sessions, read_artifact
 from jsonio import load_json
 from session_status import get_status
 
@@ -16,8 +16,9 @@ NON_METRIC_FIELDS = {"session_id", "label", "played_at", "opponent"}
 
 
 @router.get("/api/progress")
-def progress():
-    """Cross-session trend series (completed sessions, oldest first)."""
+def progress(player: str | None = None):
+    """Cross-session trend series (completed sessions, oldest first). `player`
+    limits it to that player's footage (untagged sessions count as theirs)."""
     points = []
     for d in iter_sessions(done_only=True):
         m_f, e_f, dp_f, meta_f = (d / "metrics.json", d / "events.json",
@@ -28,6 +29,8 @@ def progress():
         ev = load_json(e_f)
         dp = load_json(dp_f)
         meta = load_json(meta_f)
+        if not belongs_to(meta, player):
+            continue
         date = meta.get("played_at") or datetime.date.fromtimestamp(
             d.stat().st_mtime).isoformat()
         drills = dp.get("drills") or []
@@ -149,15 +152,14 @@ def opponent_scouting(name: str):
 
 
 @router.get("/api/streak")
-def streak():
-    """Consecutive-day play streak + this-week count, scoped to
-    DEFAULT_PLAYER_NAME sessions (same "your" scoping as the leaderboard's
-    unset-player bucket) — a session tagged with someone else's `player`
-    shouldn't inflate your own streak."""
+def streak(player: str | None = None):
+    """Consecutive-day play streak + this-week count, scoped to `player`'s sessions
+    (default: the unset-player bucket, DEFAULT_PLAYER_NAME) — a session tagged with
+    someone else's `player` shouldn't inflate your own streak."""
     dates: set[datetime.date] = set()
     for d in iter_sessions(done_only=True):
         meta = read_artifact(d, "meta.json")
-        if (meta.get("player") or "").strip() and meta["player"].strip() != DEFAULT_PLAYER_NAME:
+        if not belongs_to(meta, player or DEFAULT_PLAYER_NAME):
             continue
         played_at = meta.get("played_at")
         if played_at:

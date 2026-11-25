@@ -464,3 +464,10 @@
   }
   .knownline{margin-top:10px;font-size:14px;line-height:1.5;color:var(--muted)}
   .knownline b{color:var(--ink)}
+
+  dialog#settings{border:1px solid var(--line2);border-radius:12px;background:var(--panel);color:var(--ink);padding:22px;width:min(420px,calc(100vw - 32px))}
+  dialog#settings::backdrop{background:rgba(0,0,0,.6)}
+  .iconbtn{padding:0;width:36px;height:36px;font-size:17px;display:inline-grid;place-items:center;letter-spacing:0}
+  /* effects off (reduced motion, touch, or the setting): same treatment as prefers-reduced-motion */
+  html[data-fx="off"] :is(.ribtrack,.sess,.strow:not(.shead),.stat,.reddot,.mseg,.pbbug,.stinger.go .slate,.card::after,.figcard::after,.hero::after){animation:none}
+  html[data-fx="off"] :is(.stinger.go,.scanfx,.boot.go){display:none}

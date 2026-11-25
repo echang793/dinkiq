@@ -2,7 +2,7 @@
 /* ---------------- Trends page ---------------- */
 async function loadTrendsPage() {
   let pts;
-  try { pts = await api('/progress'); } catch (e) { return; }
+  try { pts = await api('/progress' + playerQS()); } catch (e) { return; }
   loadLeaderboard();
   loadStreak();
   if (!pts.length) {
@@ -92,7 +92,7 @@ async function loadLeaderboard() {
 }
 async function loadStreak() {
   let s;
-  try { s = await api('/streak'); } catch (e) { return; }
+  try { s = await api('/streak' + playerQS()); } catch (e) { return; }
   const card = $('streakCard');
   if (!s || !s.days_played) { card.style.display = 'none'; return; }
   card.style.display = 'block';
@@ -107,7 +107,7 @@ async function loadStreak() {
 async function loadFocusReminder() {
   const box = $('focusReminder');
   let pts;
-  try { pts = await api('/progress'); } catch (e) { box.style.display = 'none'; return; }
+  try { pts = await api('/progress' + playerQS()); } catch (e) { box.style.display = 'none'; return; }
   const last = pts[pts.length - 1];
   const dims = (last && last.dimensions) || {};
   // 3.5 mirrors feedback.WEAK_BAND -- same cutoff the drills/tips already use,
@@ -125,7 +125,7 @@ async function loadFocusReminder() {
 }
 async function loadTrend() {
   let pts;
-  try { pts = await api('/progress'); } catch (e) { return; }
+  try { pts = await api('/progress' + playerQS()); } catch (e) { return; }
   window._pcProg = pts;
   const w = $('trendWrap');
   if (!pts.length) { w.innerHTML = '<div class="empty">Complete a session to start your trend line.</div>'; return; }

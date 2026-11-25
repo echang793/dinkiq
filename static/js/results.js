@@ -21,12 +21,12 @@ async function showResults(s) {
   stopPoll();
   lastSession = s;
   const m = s.metrics;
-  const morph = portalFrom && !matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const morph = portalFrom && !noMotion();
   show('results', morph);
   if (morph) runPortal(portalFrom);
   else {
     const st = $('stinger');
-    if (st && !matchMedia('(prefers-reduced-motion:reduce)').matches) {
+    if (st && !noMotion()) {
       $('stingerTitle').textContent = (s.meta && (s.meta.label || s.meta.played_at)) || 'Match breakdown';
       st.classList.remove('go'); void st.offsetWidth; st.classList.add('go');
       clearTimeout(st._h); st._h = setTimeout(() => st.classList.remove('go'), 1300);
@@ -143,7 +143,7 @@ function renderDupr(d) {
 
   // the reveal: count up + marker slide
   const numEl = $('duprNum'), to = d.band;
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches || matchMedia('(pointer:coarse)').matches;
+  const reduce = noMotion();
   if (!reduce) {
     const t0 = performance.now(), DUR = 1200, from = DUPR_BAND_MIN;
     const ease = t => 1 - Math.pow(1 - t, 3);
@@ -216,7 +216,7 @@ function markIdentityConfirmed() {
 
 function celebrate() {
   const hero = $('duprHero');
-  if (!hero || matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+  if (!hero || noMotion()) return;
   const cols = ['var(--accent)', 'var(--accent2)', '#fff', 'var(--red)', 'var(--green)'];
   for (let i = 0; i < 36; i++) {
     const b = document.createElement('i');

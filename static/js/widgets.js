@@ -12,7 +12,7 @@ async function buildRibbon(){
   try {
     const sessions = await api('/sessions');
     const done = sessions.filter(s => s.stage === 'done');
-    const pts = await api('/progress');
+    const pts = await api('/progress' + playerQS());
     if (done.length) {
       const full = await api('/session/' + done[0].session_id);  // newest first
       const m = full.metrics || {}, ev = full.events || {}, sh = full.shots || {}, dp = full.dupr || {};

@@ -46,10 +46,9 @@ function runPortal(r0) {
     if (g) g.style.transform = 'translate(' + (-px * 18) + 'px,' + (-py * 14) + 'px)';
     cv.style.transform = 'translate(' + (-px * 32) + 'px,' + (-py * 26) + 'px)';
   });
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)');
   function frame() {
     requestAnimationFrame(frame);
-    if (document.hidden || reduce.matches) { ctx.clearRect(0, 0, W, H); return; }
+    if (document.hidden || noMotion()) { ctx.clearRect(0, 0, W, H); return; }
     ctx.clearRect(0, 0, W, H);
     const sk = SKINS[currentSkin()] || SKINS.night;
     ctx.fillStyle = 'rgba(' + sk.hi + ',.32)';
@@ -69,7 +68,7 @@ function runPortal(r0) {
 /* ---------------- magnetic buttons ---------------- */
 document.addEventListener('pointermove', e => {
   const b = e.target.closest && e.target.closest('button');
-  if (!b || b.classList.contains('skinbtn') || b.disabled || matchMedia('(prefers-reduced-motion:reduce)').matches) return;
+  if (!b || b.classList.contains('skinbtn') || b.disabled || noMotion()) return;
   const r = b.getBoundingClientRect();
   const dx = (e.clientX - r.left - r.width / 2) / r.width * 8;
   const dy = (e.clientY - r.top - r.height / 2) / r.height * 6;

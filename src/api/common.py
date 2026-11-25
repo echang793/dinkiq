@@ -18,6 +18,16 @@ MIN_FREE_BYTES = 2 << 30  # keep this much disk free; below it, refuse uploads
 DEFAULT_PLAYER_NAME = "You"
 
 
+def belongs_to(meta: dict, player: str | None) -> bool:
+    """Is this session `player`'s footage? A session with no `player` tag predates the
+    field (or never set it) and counts as the user's own; one tagged with a different
+    name is someone else's. No player given = no filtering."""
+    if not player or not player.strip():
+        return True
+    tagged = (meta.get("player") or "").strip()
+    return not tagged or tagged.casefold() == player.strip().casefold()
+
+
 def iter_sessions(*, newest_first: bool | None = None, done_only: bool = False) -> Iterator[Path]:
     """Session directories, excluding the trash and any other hidden dir.
 

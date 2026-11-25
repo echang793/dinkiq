@@ -39,6 +39,8 @@
     <button class="skinbtn" data-k="champ" style="background:linear-gradient(135deg,#ffd24d 50%,#181307 50%)" onclick="setSkin('champ',event)" aria-label="Championship skin" title="Championship"></button>
     <button class="skinbtn" data-k="clay" style="background:linear-gradient(135deg,#ff8a5c 50%,#22110c 50%)" onclick="setSkin('clay',event)" aria-label="Clay Court skin" title="Clay Court"></button>
     <button class="skinbtn" data-k="prime" style="background:linear-gradient(135deg,#39d5ff 50%,#0b1930 50%)" onclick="setSkin('prime',event)" aria-label="Prime Time skin" title="Prime Time"></button>
+  
+    <button class="ghost iconbtn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙</button>
   </div>
 </div>
 
@@ -355,6 +357,23 @@
   <span class="bskip">Broadcast system v2.6 · click to skip</span>
 </div>
 <div class="stinger" id="stinger"><div class="slate"><div class="k1">Instant Replay · Full Breakdown</div><div class="k2" id="stingerTitle">Match Analysis</div></div></div>
+<dialog id="settings" aria-labelledby="setTitle">
+  <form method="dialog" onsubmit="event.preventDefault(); saveSettings()">
+    <h2 id="setTitle">Settings</h2>
+    <p class="mut" style="font-size:13px;margin:0 0 14px">Stored on this device only.</p>
+    <div class="fld"><label for="setMe">My name</label>
+      <input id="setMe" maxlength="80" placeholder="e.g. Eric" autocomplete="name" style="width:100%">
+      <span class="mut" style="font-size:12px">Trends, streak and your season high only count your sessions. Sessions with no player name count as yours.</span></div>
+    <div class="fld" style="margin-top:12px"><label for="setHand">Handedness</label>
+      <select id="setHand" style="width:100%"><option value="">Not set</option><option value="right">Right-handed</option><option value="left">Left-handed</option></select></div>
+    <div class="fld" style="margin-top:12px"><label for="setFx">Visual effects</label>
+      <select id="setFx" style="width:100%"><option value="auto">Automatic (off on phones)</option><option value="on">Always on</option><option value="off">Off</option></select></div>
+    <div class="btnrow" style="display:flex;gap:9px;margin-top:18px;justify-content:flex-end">
+      <button type="button" class="ghost" onclick="closeSettings()">Cancel</button>
+      <button type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
 <div class="toast" id="toast"></div>
 
 <script src="static/js/core.js?v={{V}}"></script>

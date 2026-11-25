@@ -156,7 +156,7 @@ function drawHeatmap(m, animate, cid) {
   for (let r = 0; r < rows; r++) for (let q = 0; q < cols; q++) { const v = grid[r][q] / max; if (v > 0) cells.push({ r, q, v }); }
   cells.sort((a, b) => b.v - a.v);            // hottest first
   const n = cells.length || 1;
-  const reduce = matchMedia('(prefers-reduced-motion:reduce)').matches;
+  const reduce = noMotion();
   const DUR = (animate && !reduce) ? 950 : 0;
   const ease = t => 1 - Math.pow(1 - t, 3);
   cancelAnimationFrame(heatRAF);
