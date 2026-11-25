@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 import jobs
 import logsetup
 import pipeline
+import webutil
 from api import exports, insights, maintenance, sessions, trash, uploads
 from api.common import MIN_FREE_BYTES, dir_bytes, free_bytes
 from jsonio import sanitize
@@ -101,6 +102,8 @@ app.include_router(sessions.router)
 app.include_router(trash.router)
 app.include_router(insights.router)
 app.include_router(exports.router)
+app.add_middleware(webutil.TextGZip)
+app.mount("/static", webutil.VersionedStatic(directory=STATIC), name="static")
 
 
 @app.exception_handler(RequestValidationError)
@@ -209,7 +212,7 @@ def _mount_prefix(request: Request) -> str:
 
 def _spa(path: Path, request: Request) -> HTMLResponse:
     """Serve an SPA page with window.__BASE__ set to the mount prefix."""
-    html = path.read_text()
+    html = path.read_text().replace("{{V}}", webutil.asset_version(STATIC))
     prefix = _mount_prefix(request)
     if prefix:
         tag = f"<script>window.__BASE__={json.dumps(prefix)};</script>"

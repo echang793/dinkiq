@@ -296,7 +296,10 @@ def test_index_injects_base_from_forwarded_prefix():
     assert r.status_code == 200
     assert '<script>window.__BASE__="/app/dinkiq";</script>' in r.text
     # injected inside <head>, before the app's own script runs
-    assert r.text.index("window.__BASE__") < r.text.index("const BASE")
+    assert r.text.index("window.__BASE__") < r.text.index("static/js/core.js")
+    # ...and core.js is what reads it (the frontend moved out of the HTML)
+    core = client.get("/static/js/core.js").text
+    assert "window.__BASE__" in core and "const BASE" in core
 
 
 def test_index_strips_trailing_slash_from_prefix():
