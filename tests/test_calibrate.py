@@ -22,7 +22,7 @@ def _fake_session(root: Path, name: str, kitchen: float, transition: float,
     (d / "shots.json").write_text(json.dumps({"available": False}))
 
 
-def test_fit_reduces_mae(monkeypatch=None):
+def test_fit_reduces_mae(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         # players whose true DUPR runs ~0.5 above what current anchors would say
@@ -30,7 +30,7 @@ def test_fit_reduces_mae(monkeypatch=None):
         _fake_session(root, "b", kitchen=35, transition=25, rally=7, known=4.1)
         _fake_session(root, "c", kitchen=50, transition=15, rally=10, known=4.8)
         _fake_session(root, "d", kitchen=10, transition=42, rally=4, known=3.2)
-        cr.SESSIONS = root
+        monkeypatch.setattr(cr, "SESSIONS", root)
         sessions = cr.load_labeled()
         assert len(sessions) == 4
         base = cr.mae(sessions, {})
@@ -40,9 +40,9 @@ def test_fit_reduces_mae(monkeypatch=None):
         assert fitted < 0.35, fitted  # systematic offset largely absorbed
 
 
-def test_refuses_small_sample():
+def test_refuses_small_sample(monkeypatch):
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         _fake_session(root, "only", kitchen=30, transition=25, rally=6, known=3.5)
-        cr.SESSIONS = root
+        monkeypatch.setattr(cr, "SESSIONS", root)
         assert len(cr.load_labeled()) < cr.MIN_SESSIONS

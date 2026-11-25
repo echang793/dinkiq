@@ -73,7 +73,8 @@ def test_an_uncalibrated_rubric_says_so(tmp_path, monkeypatch):
     monkeypatch.setattr(dupr, "CALIBRATED_PATH", tmp_path / "none.json")
     r = _est()
     assert r["calibrated"] is False and any("calibrat" in c.lower() for c in r["caveats"])
-    (tmp_path / "cal.json").write_text(json.dumps({}))
+    anchors = [[v, b] for v, b in dupr.RUBRIC["nvz_discipline"]["anchors"]]
+    (tmp_path / "cal.json").write_text(json.dumps({"nvz_discipline": {"anchors": anchors}}))   # an empty file is no calibration
     monkeypatch.setattr(dupr, "CALIBRATED_PATH", tmp_path / "cal.json")
     assert _est()["calibrated"] is True
 

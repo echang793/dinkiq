@@ -9,10 +9,11 @@ RUBRIC is the single source of truth — tune anchors/weights here only
 (calibration against known-DUPR footage adjusts these numbers, not code).
 """
 
-import json
 from pathlib import Path
 
 import numpy as np
+
+from jsonio import load_json
 
 BAND_MIN, BAND_MAX = 2.5, 5.0
 # What the rubric can distinguish: 2.5-5.0. A stronger player reads 5.0 too; that is
@@ -60,16 +61,32 @@ RUBRIC: dict[str, dict] = {
 CALIBRATED_PATH = Path(__file__).resolve().parent.parent / "models" / "rubric_calibrated.json"
 
 
-def active_anchors(name: str) -> list[tuple[float, float]]:
-    """Anchors for a dimension: calibrated override if present, else RUBRIC.
+def _calibration(match_type: str | None = None) -> dict:
+    """The calibration override, or {} when absent or fitted for a different match type
+    (singles and doubles footage were being mixed into one rubric)."""
+    if not CALIBRATED_PATH.exists():
+        return {}
+    data = load_json(CALIBRATED_PATH)
+    fitted_for = (data.get("_meta") or {}).get("match_type")
+    if match_type and fitted_for and fitted_for != match_type:
+        return {}
+    return data
+
+
+def is_calibrated(match_type: str | None = None) -> bool:
+    return bool(_calibration(match_type))
+
+
+def active_anchors(name: str, match_type: str | None = None) -> list[tuple[float, float]]:
+    """Anchors for a dimension: calibrated override if present (and fitted for this
+    match type), else RUBRIC.
 
     calibrate_rubric.py writes the override after fitting against sessions
     tagged with a known DUPR. RUBRIC stays the structural source of truth.
     """
-    if CALIBRATED_PATH.exists():
-        data = json.loads(CALIBRATED_PATH.read_text())
-        if name in data:
-            return [tuple(a) for a in data[name]["anchors"]]
+    data = _calibration(match_type)
+    if name in data:
+        return [tuple(a) for a in data[name]["anchors"]]
     return RUBRIC[name]["anchors"]
 
 
@@ -154,7 +171,7 @@ def estimate(metrics: dict, events: dict, shots: dict,
     dims = {}
     for name, spec in RUBRIC.items():
         if name in vals:
-            anchors = active_anchors(name)
+            anchors = active_anchors(name, metrics.get("match_type"))
             band_now = interp_band(vals[name], anchors)
             target = next_anchor_target(vals[name], anchors, current_band=band_now)
             dims[name] = {"label": spec["label"], "value": round(vals[name], 1),
@@ -222,7 +239,7 @@ def estimate(metrics: dict, events: dict, shots: dict,
     at_ceiling, at_floor = snapped >= BAND_MAX, snapped <= BAND_MIN
     if at_ceiling:
         caveats.append("This rubric tops out at about 5.0 — a stronger player would read the same.")
-    calibrated = CALIBRATED_PATH.exists()
+    calibrated = is_calibrated(metrics.get("match_type"))
     if not calibrated:
         caveats.append("Not yet calibrated against footage of players with known ratings — "
                        "a rough resemblance, not a measurement.")
