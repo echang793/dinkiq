@@ -5,6 +5,7 @@ import datetime
 from fastapi import APIRouter, HTTPException
 
 import pipeline
+import practice
 from api import sessions as sessions_api
 from api.common import DEFAULT_PLAYER_NAME, belongs_to, compare_summary, get_session_dir, iter_sessions, read_artifact
 from jsonio import load_json
@@ -178,6 +179,15 @@ def streak(player: str | None = None):
                 pass
         dates.add(datetime.date.fromtimestamp(d.stat().st_mtime))
 
+    # a practice entry is a day on the court too: it keeps the streak alive
+    practice_dates: set[datetime.date] = set()
+    for p in practice.load_store()["practice"]:
+        try:
+            practice_dates.add(datetime.date.fromisoformat(p["date"]))
+        except ValueError:
+            pass
+    dates |= practice_dates
+
     today = datetime.date.today()
     one_day = datetime.timedelta(days=1)
 
@@ -205,6 +215,7 @@ def streak(player: str | None = None):
         "longest_streak_days": longest,
         "sessions_this_week": sessions_this_week,
         "days_played": len(dates),
+        "practice_days": len(practice_dates),
     }
 
 

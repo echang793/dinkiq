@@ -27,7 +27,7 @@ import jobs
 import logsetup
 import pipeline
 import webutil
-from api import analysis, exports, insights, maintenance, sessions, trash, uploads
+from api import analysis, exports, insights, maintenance, practice, sessions, trash, uploads
 from api.common import MIN_FREE_BYTES, dir_bytes, free_bytes
 from jsonio import sanitize
 from pipeline import SESSIONS
@@ -103,6 +103,7 @@ app.include_router(trash.router)
 app.include_router(insights.router)
 app.include_router(exports.router)
 app.include_router(analysis.router)
+app.include_router(practice.router)
 app.add_middleware(webutil.TextGZip)
 app.mount("/static", webutil.VersionedStatic(directory=STATIC), name="static")
 

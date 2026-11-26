@@ -246,10 +246,40 @@ more points won than lost).
 History plus the opponent's shot-landing tendency: `{shots_tracked, side_counts,
 dominant_side, dominant_side_pct, ...}`.
 
+### `GET /session/{sid}/changes`
+This session against the previous finished session of the same player (untagged = "You"):
+`{available, previous{session_id,label,played_at}, metrics[{key,label,unit,now,before,delta,direction}],
+rating{now,before,delta,within_margin}, dimensions[{key,label,now,before,band_now,band_before,delta_band,
+direction}], headline}`. `direction` is `better|worse|same|neutral` (lower is better for time in
+no-man's land); a change smaller than what's worth naming is `same`. `rating.within_margin` is true
+when the estimate moved by less than its own range, i.e. noise. `{available:false, reason}` for a
+first session; `409` unless `done`.
+
+### `GET /goals`
+`{goals[{dimension,target,created_at,label,unit,higher_is_better,current,achieved,progress_pct}],
+suggested[{dimension,label,unit,current,target}]}`. `current` is the dimension's value in the latest
+finished session (`?player=` scopes it); `suggested` is the next tier on each dimension that has no
+goal yet, weakest first. Stored in `data/goals.json`.
+### `PUT /goals/{dimension}` `{target: 0–1000}` — set or replace the goal (`404` unknown dimension)
+### `DELETE /goals/{dimension}` — remove it (idempotent)
+
+### `POST /practice`
+`{drill, dimension?, minutes: 1–600 (default 15), date?: YYYY-MM-DD, not in the future}` → the logged
+row `{id, drill, dimension, minutes, date}`. Same file as goals.
+### `GET /practice` → `{practice[]}` newest first (`?days=` window, default 90)
+### `DELETE /practice/{entry_id}` (`404` if absent)
+
+### `GET /plan`
+This week's drills: the weakest dimensions averaged over the last three rated sessions
+(`?player=` scopes them), each with its drill, `done` once a practice entry for that drill or
+dimension exists in the last 7 days, plus `week_minutes`. With nothing weak, one `maintenance` item.
+`{available:false}` before any rated session.
+
 ### `GET /streak`
 Consecutive-day play streak. `?player=NAME` scopes it to that player's sessions (untagged sessions
 count as theirs; case-insensitive); without it, sessions whose `player` is unset or `"You"`:
-`{current_streak_days, longest_streak_days, sessions_this_week, days_played}`.
+`{current_streak_days, longest_streak_days, sessions_this_week, days_played, practice_days}`.
+A logged practice day (`POST /practice`) counts as a day on the court, so it keeps the streak alive.
 
 ### `GET /leaderboard`
 `{players: [{player, sessions, latest_band, best_band, win_pct, total_distance_ft}]}`
