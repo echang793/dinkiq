@@ -149,6 +149,17 @@ def point_summary(outcomes: list[dict], ball_available: bool,
     return summary
 
 
+def summarize(outcomes: list[dict], ball_available: bool, rallies: list[dict],
+              shots_report: dict, hitters: list[str] | None = None) -> dict:
+    """Everything points.json holds besides the outcomes themselves. One place, so the
+    analysis and a manual correction can't drift apart: the serve-placement and shot-type
+    breakdowns are derived from each rally's winner, so a changed winner must rebuild them."""
+    summary = point_summary(outcomes, ball_available, hitters=hitters)
+    summary["serve_side_win_rates"] = serve_side_win_rates(shots_report.get("serves") or [], outcomes)
+    summary["shot_type_outcomes"] = shot_type_outcomes(shots_report.get("shots") or [], rallies, outcomes)
+    return summary
+
+
 def _win_rate_by_key(rows: list[tuple[str, str]]) -> dict:
     """(key, winner) pairs -> {key: {attempts, win_pct}}, "unknown" winners
     dropped. Shared tally shape for serve_side_win_rates/shot_type_outcomes."""

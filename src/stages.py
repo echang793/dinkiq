@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import corrections
 import media
 import notify
 from court import NET_Y, CourtCalibration
@@ -15,8 +16,7 @@ from events import (corroborate_hits, detect_hits, detect_swings, hits_table,
 from jsonio import atomic_write_json, load_json
 from metrics import compute_metrics
 from pipeline import FPS, MODELS
-from points import (MY_TEAM, attribute_hitters, point_summary, rally_outcomes,
-                    serve_side_win_rates, shot_type_outcomes, side_by_rally)
+from points import MY_TEAM, attribute_hitters, rally_outcomes, side_by_rally, summarize
 from session_status import get_status, set_status
 from tracking import (PlayerNotFound, TrackIndex, count_secondary_court_tracks,
                       pick_opponent_chains, pick_subject, run_tracking, stitch_subject,
@@ -161,11 +161,9 @@ def points_stage(sdir: Path, rallies: list[dict], hit_times, hitters: list[str],
     outcomes = rally_outcomes(rallies, hit_times, hitters,
                               bounces_court if ball_available else None,
                               my_side_by_rally=side_by_rally(rallies, pos))
-    summary = point_summary(outcomes, ball_available, hitters=hitters)
-    summary["serve_side_win_rates"] = serve_side_win_rates(
-        shots_report.get("serves") or [], outcomes)
-    summary["shot_type_outcomes"] = shot_type_outcomes(
-        shots_report.get("shots") or [], rallies, outcomes)
+    # the user's manual fixes outlive reprocess: they live in corrections.json, not here
+    outcomes = corrections.apply(outcomes, rallies, corrections.load(sdir))
+    summary = summarize(outcomes, ball_available, rallies, shots_report, hitters=hitters)
     atomic_write_json(sdir / "points.json", {"outcomes": outcomes, **summary})
 
 

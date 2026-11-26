@@ -130,9 +130,16 @@ meta. `played_at` must be a real `YYYY-MM-DD` (`""` clears it). `context` ∈
 this is how `known_dupr` and `context` are unset); a field not sent is left alone.
 
 ### `PATCH /session/{sid}/points/{idx}`
-`{winner: "my_team"|"opp_team"|"unknown", unforced_error?}` — override a detected rally
-winner; recomputes the points summary (`404` index out of range). Corrections live in
-`points.json`, so a recalibration or reprocess discards them.
+`{winner: "my_team"|"opp_team"|"unknown", unforced_error?: bool}` — override a detected rally
+winner; recomputes the points summary and the serve-placement / shot-type breakdowns
+(`404` index out of range). The fix is stored in `corrections.json`, keyed by the rally's start
+time, so a recalibration or reprocess **re-applies** it to the freshly detected rallies (a
+correction whose rally no longer exists is dropped). Corrected rows carry `corrected: true` and
+the heuristic's own answer as `auto_winner` / `auto_unforced_error`.
+
+### `DELETE /session/{sid}/points/{idx}`
+Undo a correction: the rally goes back to what the analysis said. Idempotent — a rally that was
+never corrected comes back unchanged (`404` index out of range). Returns the new `points.json`.
 
 ### `PATCH /session/{sid}/clip/{n}/note`
 `{note}` (≤500 chars; empty removes it) → `{clip_notes}`.

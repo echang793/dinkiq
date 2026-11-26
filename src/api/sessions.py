@@ -8,11 +8,13 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
-import pipeline
+import corrections
 import jobs
 import media
+import pipeline
 from api.common import LAST_CALIBRATION_PATH, dir_bytes, get_session_dir, read_artifact, iter_sessions
 from jsonio import atomic_write_json, load_json
+from points import summarize
 from session_status import get_status
 
 router = APIRouter()
@@ -166,41 +168,56 @@ class PointCorrection(BaseModel):
         return v
 
 
+def _rebuild_points(sdir, data: dict, outcomes: list[dict]) -> dict:
+    """points.json with `outcomes` swapped in and every summary recomputed from them. Per-player
+    hit counts don't depend on who won a rally, so they carry over (the per-hit hitter list
+    that built them isn't persisted)."""
+    rallies = read_artifact(sdir, "events.json").get("rallies", [])
+    summary = summarize(outcomes, "caveat" not in data, rallies, read_artifact(sdir, "shots.json"))
+    summary["hits_by_player"] = data.get("hits_by_player", {})
+    new_data = {"outcomes": outcomes, **summary}
+    atomic_write_json(sdir / "points.json", new_data)
+    return new_data
+
+
 @router.patch("/api/session/{sid}/points/{idx}")
 def correct_point(sid: str, idx: int, patch: PointCorrection):
-    """Manually override a heuristically-detected rally winner (the
-    audio+ball heuristic in points.py can misjudge close calls). Recomputes
-    the session's win/loss summary from the corrected outcomes; per-player
-    hit counts are independent of who won each rally, so they're carried
-    over unchanged rather than recomputed (the hitter attribution used to
-    build them isn't persisted anywhere)."""
-    from points import point_summary, serve_side_win_rates, shot_type_outcomes
-
+    """Manually override a heuristically-detected rally winner (the audio+ball heuristic can
+    misjudge close calls). The fix is stored in corrections.json, keyed by the rally's start
+    time, so reprocessing re-applies it instead of erasing it."""
     sdir = get_session_dir(sid)
-    pf = sdir / "points.json"
-    data = load_json(pf)
+    data = load_json(sdir / "points.json")
     outcomes = data.get("outcomes", [])
     if idx < 0 or idx >= len(outcomes):
         raise HTTPException(404, "rally index out of range")
-    outcomes[idx]["winner"] = patch.winner
-    if patch.unforced_error is not None:
-        outcomes[idx]["unforced_error"] = patch.unforced_error
-    outcomes[idx]["corrected"] = True
-    ball_available = "caveat" not in data
-    summary = point_summary(outcomes, ball_available)
-    summary["hits_by_player"] = data.get("hits_by_player", {})
-    # a corrected winner changes who "gets credit" for a rally, so the
-    # serve-placement/shot-type breakdowns (both derived from outcomes)
-    # must be recomputed too, not just carried over stale
-    shots_report = read_artifact(sdir, "shots.json")
     rallies = read_artifact(sdir, "events.json").get("rallies", [])
-    summary["serve_side_win_rates"] = serve_side_win_rates(
-        shots_report.get("serves") or [], outcomes)
-    summary["shot_type_outcomes"] = shot_type_outcomes(
-        shots_report.get("shots") or [], rallies, outcomes)
-    new_data = {"outcomes": outcomes, **summary}
-    atomic_write_json(pf, new_data)
-    return new_data
+    if idx < len(rallies):
+        corrections.set_correction(sdir, rallies[idx]["start"], patch.winner, patch.unforced_error)
+        outcomes = corrections.apply(outcomes, rallies, corrections.load(sdir))
+    else:  # no rally times to key it by: apply it to this analysis only
+        row = outcomes[idx]
+        row["winner"] = patch.winner
+        if patch.unforced_error is not None:
+            row["unforced_error"] = patch.unforced_error
+        row["corrected"] = True
+    return _rebuild_points(sdir, data, outcomes)
+
+
+@router.delete("/api/session/{sid}/points/{idx}")
+def undo_point_correction(sid: str, idx: int):
+    """Take a manual correction back: the rally returns to what the analysis said."""
+    sdir = get_session_dir(sid)
+    data = load_json(sdir / "points.json")
+    outcomes = data.get("outcomes", [])
+    if idx < 0 or idx >= len(outcomes):
+        raise HTTPException(404, "rally index out of range")
+    rallies = read_artifact(sdir, "events.json").get("rallies", [])
+    if idx < len(rallies):
+        corrections.remove_correction(sdir, rallies[idx]["start"])
+        outcomes = corrections.apply(outcomes, rallies, corrections.load(sdir))
+    else:
+        outcomes[idx] = corrections.original(outcomes[idx])
+    return _rebuild_points(sdir, data, outcomes)
 
 
 _ABSENT = object()
