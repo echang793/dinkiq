@@ -146,9 +146,16 @@ never corrected comes back unchanged (`404` index out of range). Returns the new
 
 ### `GET /session/{sid}/clip/{n}` → rally clip MP4 (`n` indexes `events.rallies`)
 ### `GET /session/{sid}/frame` → first-frame JPEG (calibration backdrop)
+### `POST /session/{sid}/highlights`
+Build the reel of the top rallies **in the background**: `202 {state:"building"}` while it runs,
+`200 {state:"ready"}` if it already exists (a second call never starts a second build). `409` unless
+`done`.
+### `GET /session/{sid}/highlights/status` → `{state: none|building|ready|error, error}`
+`ready` means the file exists, so a recalibration (which deletes the reel) resets it to `none`.
 ### `GET /session/{sid}/highlights.mp4`
-Reel of the top rallies, built on first request and cached until recalibration. `409` unless
-`done`; `404` if there are no clips.
+The reel. If it hasn't been built yet this still builds it inline (kept for plain links); the app
+uses `POST` + `status` instead. Cached until recalibration. `409` unless `done`; `404` if there are
+no clips.
 ### `GET /session/{sid}/report.pdf` → one-page PDF (`409` unless `done`)
 ### `GET /session/{sid}/card.png` → shareable stat card (`409` unless `done`)
 

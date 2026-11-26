@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 
 import media
+import reel
 from api.common import DEFAULT_PLAYER_NAME, compare_summary, get_session_dir, read_artifact, iter_sessions
 from session_status import get_status
 
@@ -41,6 +42,25 @@ def export_sessions_csv():
     writer.writerows(rows)
     return Response(content=buf.getvalue(), media_type="text/csv", headers={
         "Content-Disposition": 'attachment; filename="dinkiq_sessions.csv"'})
+
+
+@router.post("/api/session/{sid}/highlights")
+def start_highlights(sid: str, response: Response):
+    """Build the reel in the background. `202` while it builds, `200` once it exists; poll
+    `/highlights/status` and then fetch `/highlights.mp4`."""
+    sdir = get_session_dir(sid)
+    if get_status(sdir).get("stage") != "done":
+        raise HTTPException(409, "session not ready for a highlight reel")
+    st = reel.start(sdir)
+    response.status_code = 202 if st["state"] == "building" else 200
+    return st
+
+
+@router.get("/api/session/{sid}/highlights/status")
+def highlights_status(sid: str):
+    """`{state: none|building|ready|error, error}`. `ready` is simply "the file exists", so a
+    recalibration that discards the reel resets it to `none`."""
+    return reel.status(get_session_dir(sid))
 
 
 @router.get("/api/session/{sid}/highlights.mp4")
