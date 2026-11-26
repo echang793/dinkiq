@@ -15,7 +15,7 @@ Heuristic, gated by available signal:
 
 import numpy as np
 
-from court import BOUNCE_LOOKUP_WINDOW_S, NET_Y, first_bounce_after, on_court
+from court import BOUNCE_LOOKUP_WINDOW_S, COURT_L, NET_Y, first_bounce_after, on_court
 
 OUT_MARGIN = 0.5  # ft tolerance around the boundary when calling a bounce "out"
 NET_TOL_FT = 1.0  # a bounce this close to the net line can't be assigned to a side
@@ -63,6 +63,11 @@ def side_by_rally(rallies: list[dict], pos) -> list[int]:
     return out
 
 
+def _out_kind(y: float) -> str:
+    """An out ball is LONG when it passed a baseline, otherwise it left through a sideline (WIDE)."""
+    return "long" if y < -OUT_MARGIN or y > COURT_L + OUT_MARGIN else "wide"
+
+
 def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str],
                    bounces_court=None, my_side_by_rally: list[int] | None = None) -> list[dict]:
     """Per rally: server, last_hitter, winner, unforced_error (None if unknown).
@@ -99,13 +104,13 @@ def rally_outcomes(rallies: list[dict], hit_times: np.ndarray, hitters: list[str
                 out.append(row)             # at the net line: can't tell which side
                 continue
             if np.sign(float(b["y"]) - NET_Y) == hitter_side:   # landed on the hitter's own side
-                row.update(winner=other_team, unforced_error=True)
+                row.update(winner=other_team, unforced_error=True, error_kind="net")
                 out.append(row)
                 continue
         if on_court(float(b["x"]), float(b["y"]), margin=OUT_MARGIN):
             row.update(winner=team, unforced_error=False)
         else:
-            row.update(winner=other_team, unforced_error=True)
+            row.update(winner=other_team, unforced_error=True, error_kind=_out_kind(float(b["y"])))
         out.append(row)
     return out
 

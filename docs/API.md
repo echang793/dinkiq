@@ -152,6 +152,25 @@ Reel of the top rallies, built on first request and cached until recalibration. 
 ### `GET /session/{sid}/report.pdf` → one-page PDF (`409` unless `done`)
 ### `GET /session/{sid}/card.png` → shareable stat card (`409` unless `done`)
 
+### `GET /session/{sid}/video`
+The whole normalized match video, with HTTP `Range` support (`206`) so a player can seek straight
+to a rally. `404` until ingest has produced it.
+
+### `GET /session/{sid}/moments`
+Seekable windows into the full video behind each headline number, by kind:
+`{won, lost, unforced_errors, longest, serves, drive, dink, drop, medium: [{t, rally, start, end, label}]}`.
+`start`/`end` are seconds into `/video` (already padded, never before 0); `rally` indexes
+`events.rallies` (or `null` for a shot outside any rally). `409` unless `done`.
+
+### `GET /session/{sid}/analytics`
+Computed on demand from stored artifacts (so old sessions get it without a reprocess). Blocks, each
+with its sample size and `available`: `by_rally_length{buckets[{key,label,played,won,win_pct}],scored}`,
+`pace{rallies_per_min,avg_rest_s,work_rest_ratio,breaks}`, `return_and_run{returns,reached,
+reached_pct,avg_secs_to_kitchen}`, `third_shot{n,mix}` (needs a usable ball track),
+`errors{net,long,wide,unknown,total}` (your side's unforced errors; `unknown` = analysed before the
+direction was recorded), `end_zone{zones{zone:{played,won,win_pct}}}`, and `tips[]` (each quotes its
+sample, e.g. "2 of 3 of your errors…"). `409` unless `done`.
+
 ### `GET /session/{sid}/subject-marker`
 `{subject, partner, opponent, opponents[]}` — earliest-frame pixel boxes `{frame,x1,y1,x2,y2}`
 for the "who are we tracking" overlay. `200` with nulls (never `404`) when tracking isn't ready.
