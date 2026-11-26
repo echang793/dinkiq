@@ -80,7 +80,9 @@ def goals(player: str | None = None):
     dims = _latest_dims(player)
     have = {g["dimension"] for g in store["goals"]}
     return {"goals": [practice.goal_view(g, (dims.get(g["dimension"]) or {}).get("value")) for g in store["goals"]],
-            "suggested": practice.suggestions(dims, have)}
+            "suggested": practice.suggestions(dims, have),
+            "dimensions": [{"dimension": k, "label": v["label"], "unit": v["unit"],
+                            "higher_is_better": practice.higher_is_better(k)} for k, v in RUBRIC.items()]}
 
 
 @router.put("/api/goals/{dimension}")

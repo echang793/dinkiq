@@ -250,3 +250,9 @@ def test_the_plan_still_offers_something_when_nothing_is_weak():
     _session("a", "2026-01-01", dims=strong)
     items = client.get("/api/plan").json()["items"]
     assert len(items) == 1 and items[0]["maintenance"] is True
+
+
+def test_the_goals_response_lists_the_dimensions_a_goal_can_be_set_on():
+    dims = {d["dimension"]: d for d in client.get("/api/goals").json()["dimensions"]}
+    assert dims["nvz_discipline"]["label"] == "Kitchen presence" and dims["nvz_discipline"]["unit"] == "%"
+    assert dims["positioning"]["higher_is_better"] is False and dims["rally_sustain"]["higher_is_better"] is True

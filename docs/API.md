@@ -266,7 +266,8 @@ first session; `409` unless `done`.
 `{goals[{dimension,target,created_at,label,unit,higher_is_better,current,achieved,progress_pct}],
 suggested[{dimension,label,unit,current,target}]}`. `current` is the dimension's value in the latest
 finished session (`?player=` scopes it); `suggested` is the next tier on each dimension that has no
-goal yet, weakest first. Stored in `data/goals.json`.
+goal yet, weakest first; `dimensions[{dimension,label,unit,higher_is_better}]` lists what a goal can be
+set on. Stored in `data/goals.json`.
 ### `PUT /goals/{dimension}` `{target: 0–1000}` — set or replace the goal (`404` unknown dimension)
 ### `DELETE /goals/{dimension}` — remove it (idempotent)
 
