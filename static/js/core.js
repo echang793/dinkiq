@@ -186,13 +186,13 @@ function animateStats(container) {
 /* ---------------- screens ---------------- */
 function show(id, instant) {
   const doSwap = () => {
-    ['home','calib','proc','results','sessions','trends','compare'].forEach(s => {
+    ['home','calib','proc','results','sessions','trends','practice','compare'].forEach(s => {
       const el = $(s);
       if (s === id) { el.classList.remove('on'); void el.offsetWidth; el.classList.add('on'); }
       else el.classList.remove('on');
     });
-    const nav = { home:'navFilm', sessions:'navSessions', trends:'navTrends' };
-    ['navFilm','navSessions','navTrends'].forEach(n => { const e = $(n); if (e) e.classList.toggle('here', nav[id] === n); });
+    const nav = { home:'navFilm', sessions:'navSessions', trends:'navTrends', practice:'navPractice' };
+    ['navFilm','navSessions','navTrends','navPractice'].forEach(n => { const e = $(n); if (e) e.classList.toggle('here', nav[id] === n); });
     window.scrollTo({ top: 0 });
   };
   const reduce = noMotion();
@@ -208,7 +208,7 @@ function show(id, instant) {
 }
 /* ---------------- routes ----------------
    #/ home · #/s/<id> a session (whatever screen its state calls for) · #/sessions · #/trends ·
-   #/compare?ids=a,b,c. The hash is the source of truth: back/forward, reload and shared links all
+   #/practice · #/compare?ids=a,b,c. The hash is the source of truth: back/forward, reload and shared links all
    land where they should; the go*() helpers just change the hash. */
 let booted = false;
 function nav(h) { if (location.hash === h || (h === '#/' && !location.hash)) route(); else location.hash = h; }
@@ -228,6 +228,8 @@ async function loadHome() {
 function viewHome() { stopPoll(); show('home'); loadHome(); }
 function viewSessions() { stopPoll(); show('sessions'); loadSessionsPage(); }
 function viewTrends() { stopPoll(); show('trends'); loadTrendsPage(); }
+function goPractice() { nav('#/practice'); }
+function viewPractice() { stopPoll(); show('practice'); loadPractice(); }
 function route() {
   if (typeof setCalFull === 'function') setCalFull(false);
   const [path, qs] = (location.hash || '#/').slice(1).split('?');
@@ -235,6 +237,7 @@ function route() {
   if (parts[0] === 's' && parts[1]) return viewSession(decodeURIComponent(parts[1]));
   if (parts[0] === 'sessions') return viewSessions();
   if (parts[0] === 'trends') return viewTrends();
+  if (parts[0] === 'practice') return viewPractice();
   if (parts[0] === 'compare') return viewCompare((q.get('ids') || '').split(',').filter(Boolean));
   return viewHome();
 }

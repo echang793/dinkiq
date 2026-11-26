@@ -32,6 +32,7 @@
     <span class="here" id="navFilm" onclick="goHome()" tabindex="0" role="button">Film Room</span>
     <span id="navSessions" onclick="goSessions()" tabindex="0" role="button">Sessions</span>
     <span id="navTrends" onclick="goTrends()" tabindex="0" role="button">Trends</span>
+    <span id="navPractice" onclick="goPractice()" tabindex="0" role="button">Practice</span>
     <div class="navdrop" id="navMore">
       <span onclick="toggleNavMore(event)" tabindex="0" role="button" aria-haspopup="true">More ▾</span>
       <div class="navdrop-panel" id="navMorePanel">
@@ -47,9 +48,8 @@
     <button class="skinbtn" data-k="champ" style="background:linear-gradient(135deg,#ffd24d 50%,#181307 50%)" onclick="setSkin('champ',event)" aria-label="Championship skin" title="Championship"></button>
     <button class="skinbtn" data-k="clay" style="background:linear-gradient(135deg,#ff8a5c 50%,#22110c 50%)" onclick="setSkin('clay',event)" aria-label="Clay Court skin" title="Clay Court"></button>
     <button class="skinbtn" data-k="prime" style="background:linear-gradient(135deg,#39d5ff 50%,#0b1930 50%)" onclick="setSkin('prime',event)" aria-label="Prime Time skin" title="Prime Time"></button>
-  
-    <button class="ghost iconbtn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙</button>
   </div>
+  <button class="ghost iconbtn" onclick="openSettings()" aria-label="Settings" title="Settings">⚙</button>
 </div>
 
 <div class="ribbon" id="ribbon"><div class="ribtrack" id="ribtrack"></div></div>
@@ -75,6 +75,18 @@
       <input type="file" id="file" aria-label="Choose a match video" accept=".mp4,.mov,.m4v" style="display:none">
       <div id="upWarn"></div>
     </div>
+    <details class="card fold" id="filmGuide">
+      <summary><h2>How to film a session</h2></summary>
+      <ul class="guide">
+        <li><b>Mount the phone behind the baseline</b>, centred on the court and 6–10 ft up (a fence, a tripod, a tall bag). Eye level from the ground hides the far side.</li>
+        <li><b>Landscape, 1080p at 30 fps</b>, phone locked still. Turn off anything that zooms or auto-follows.</li>
+        <li><b>Get the whole court in frame</b>, including all four corners and the kitchen lines. You can put a corner just outside the frame; you'll tap it anyway.</li>
+        <li><b>Keep the players and the ball in the picture</b> the whole point, with good light and no strong sun behind the court.</li>
+        <li><b>One game is plenty</b> (10–20 minutes). Short clips under about 45 s of live play give no rating at all.</li>
+        <li><b>Leave the sound on.</b> The sound of each paddle hit is how rallies are found.</li>
+      </ul>
+      <p class="mut" style="font-size:13px;margin:12px 0 0">Want to look around first? <a class="link" href="?demo=1#/s/d2">Explore a sample session</a>. It is clearly labelled sample data and nothing in it is saved.</p>
+    </details>
     <div class="homegrid">
       <div class="colL">
         <div class="card">
@@ -164,7 +176,7 @@
           <div class="rmenu" id="rMenu" role="menu" hidden>
             <button class="ghost" role="menuitem" onclick="downloadStatCard()">Stat card (image)</button>
             <button class="ghost" role="menuitem" onclick="downloadReport()">Report (PDF)</button>
-            <button class="ghost" role="menuitem" onclick="downloadHighlights()">Highlight reel</button>
+            <button class="ghost" role="menuitem" id="hlMenu" onclick="highlightsClick()">Highlight reel</button>
             <button class="ghost" role="menuitem" onclick="startCalib(lastSession && lastSession.meta && lastSession.meta.match_type)">Recalibrate</button>
             <button class="ghost" role="menuitem" onclick="reanalyze()">Re-analyze</button>
           </div>
@@ -186,9 +198,14 @@
         </div>
       </div>
     </div>
+    <div class="card" id="changesCard" style="display:none">
+      <h2>Since last time</h2>
+      <div id="changesBody"></div>
+    </div>
     <div class="card">
       <h2>Shots</h2>
       <div class="grid" id="shotStats"></div>
+      <div class="chips" id="shotMoments" role="group" aria-label="Watch your shots"></div>
       <div class="bars" id="shotMix"></div>
       <div id="shotNote"></div>
       <div class="herowrap" id="shotVizWrap" style="display:none;margin-top:16px">
@@ -209,17 +226,32 @@
         <div class="heatnote">every detected bounce this session · brighter = later in the match</div>
       </div>
     </div>
-    <div class="card">
-      <h2>Rallies</h2>
+    <div class="card" id="rallyCard">
+      <div class="cardhead"><h2>Rallies</h2>
+        <button class="ghost sm" id="hlBtn" onclick="highlightsClick()">Make highlight reel</button></div>
       <div class="grid" id="rallyStats"></div>
+      <div id="timelineWrap" style="display:none">
+        <div class="heatnote" style="margin:16px 0 8px">Match timeline: tap a rally to watch it · green won · red lost · grey unclear</div>
+        <div class="tl" id="rallyTimeline" role="group" aria-label="Rally timeline"></div>
+      </div>
+      <div class="chips" id="momentChips" role="group" aria-label="Show me the moments"></div>
+      <div id="matchWrap" style="display:none">
+        <video id="matchVideo" controls playsinline preload="none"></video>
+        <div id="momentPanel" aria-live="polite"></div>
+      </div>
       <div id="rallyList" style="margin-top:16px"></div>
       <video id="rallyVideo" controls playsinline preload="metadata"></video>
     </div>
     <div class="card">
       <h2>Points &amp; outcomes</h2>
       <div class="grid" id="pointStats"></div>
+      <div class="chips" id="pointMoments" role="group" aria-label="Watch your points"></div>
       <div class="bars" id="pointBars"></div>
       <div id="pointNote"></div>
+    </div>
+    <div class="card" id="analyticsCard" style="display:none">
+      <h2>Deeper stats</h2>
+      <div id="analyticsBody"></div>
     </div>
     <div class="card">
       <h2>Movement &amp; positioning</h2>
@@ -344,6 +376,10 @@
     </div>
     <div class="card"><div class="grid" id="trendSummary"></div></div>
     <div class="card"><h2>Estimated level over time</h2><div id="trendChartBig"></div></div>
+    <div class="card" id="dimTrendCard" style="display:none">
+      <h2>Each skill over time</h2>
+      <div class="dimtrends" id="dimTrends"></div>
+    </div>
     <div class="card" id="streakCard" style="display:none">
       <h2>Streak</h2>
       <div class="grid" id="streakStats"></div>
@@ -358,6 +394,38 @@
       <div id="leaderboardTable" style="overflow-x:auto"></div>
     </div>
     <div class="card"><h2>Session history</h2><div id="trendTableBig" style="overflow-x:auto"></div></div>
+  </section>
+
+  <section class="screen" id="practice" aria-label="Practice">
+    <div class="pagehead">
+      <div>
+        <h1 class="ptitle">Practice</h1>
+        <p class="psub">This week's drills, your goals, and what you've logged.</p>
+      </div>
+    </div>
+    <div class="card"><div class="grid" id="practiceStats"></div></div>
+    <div class="card">
+      <h2>This week's plan</h2>
+      <div id="planBody"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card">
+      <h2>Goals</h2>
+      <div id="goalBody"></div>
+      <div class="metafields" style="margin-top:16px">
+        <div class="fld"><label for="goalDim">Skill</label><select id="goalDim" style="min-width:170px"></select></div>
+        <div class="fld"><label for="goalTarget">Target</label><input id="goalTarget" type="number" min="0" max="1000" step="any" style="width:110px"></div>
+        <button class="sm" onclick="setGoalFromForm()">Set goal</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Practice log</h2>
+      <div class="metafields" style="margin-bottom:14px">
+        <div class="fld"><label for="plDrill">What did you work on?</label><input id="plDrill" maxlength="80" placeholder="e.g. Third-shot drops" style="width:220px"></div>
+        <div class="fld"><label for="plMin">Minutes</label><input id="plMin" type="number" min="1" max="600" value="20" style="width:90px"></div>
+        <button class="sm" onclick="logPracticeFromForm()">Log it</button>
+      </div>
+      <div id="practiceLog"></div>
+    </div>
   </section>
 
 </div>
@@ -408,9 +476,11 @@
 <script src="static/js/calibrate.js?v={{V}}"></script>
 <script src="static/js/results.js?v={{V}}"></script>
 <script src="static/js/rallies.js?v={{V}}"></script>
+<script src="static/js/insights.js?v={{V}}"></script>
 <script src="static/js/session_meta.js?v={{V}}"></script>
 <script src="static/js/sessions.js?v={{V}}"></script>
 <script src="static/js/trends.js?v={{V}}"></script>
+<script src="static/js/practice.js?v={{V}}"></script>
 <script src="static/js/demo.js?v={{V}}"></script>
 <script src="static/js/widgets.js?v={{V}}"></script>
 <script src="static/js/fx.js?v={{V}}"></script>

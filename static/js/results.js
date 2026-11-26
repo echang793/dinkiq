@@ -60,6 +60,7 @@ async function showResults(s) {
   renderPoints(s.points, s.events);
   renderDupr(s.dupr);
   updateDq();
+  loadInsights(s);
 }
 
 /* ---- DUPR reveal ---- */
@@ -234,11 +235,6 @@ function downloadReport() {
   if (DEMO) { toast('PDF report needs the live backend'); return; }
   window.open(BASE + '/api/session/' + sid + '/report.pdf', '_blank');
 }
-function downloadHighlights() {
-  if (DEMO) { toast('Highlight reel needs the live backend'); return; }
-  toast('Building highlight reel…');
-  window.open(BASE + '/api/session/' + sid + '/highlights.mp4', '_blank');
-}
 function downloadStatCard() {
   if (DEMO) { toast('Stat card needs the live backend'); return; }
   window.open(BASE + '/api/session/' + sid + '/card.png', '_blank');
@@ -283,17 +279,18 @@ function renderPoints(pt, ev) {
   if (outs.length) {
     const badge = o => isMyTeam(o.winner) ? '<span class="wbadge win">WON' + (o.winner === 'partner' ? ' (partner)' : '') + '</span>'
       : isOppTeam(o.winner) ? '<span class="wbadge loss">LOST</span>' : '';
-    const fixBtns = i => DEMO ? '' :
-      '<span class="ptfix" onclick="event.stopPropagation()">' +
-      '<button class="ghost sm" style="padding:3px 8px;font-size:10px" onclick="correctPoint(' + i + ',\'my_team\')">won</button>' +
-      '<button class="ghost sm" style="padding:3px 8px;font-size:10px" onclick="correctPoint(' + i + ',\'opp_team\')">lost</button></span>';
+    const fixBtns = (i, o) => DEMO ? '' :
+      '<span class="ptfix" onclick="event.stopPropagation()"><select class="fixsel" aria-label="Fix the result of rally ' + (i + 1) + '" onchange="fixPoint(' + i + ', this)">' +
+      '<option value="">Fix…</option><option value="won">I won it</option><option value="won_ue">I won — their error</option>' +
+      '<option value="lost">I lost it</option><option value="lost_ue">I lost — my error</option><option value="unclear">Unclear</option>' +
+      (o.corrected ? '<option value="undo">Undo my fix</option>' : '') + '</select></span>';
     note += '<div class="outcomes">' + outs.map((o, i) => {
       const ev2 = ev && ev.rallies && ev.rallies[i];
       return '<div class="orow"><span class="oidx">' + String(i+1).padStart(2,'0') + '</span>' +
         '<span class="oinfo">' + (ev2 ? ev2.hits + ' hits' : 'rally ' + (i+1)) +
         (o.server && o.server !== 'unknown' ? ' · ' + (isMyTeam(o.server) ? playerName(o.server) + ' served' : 'opp. served') : '') + '</span>' +
         (o.unforced_error ? '<span class="wbadge ue" title="Unforced error">UE</span>' : '') + badge(o) +
-        (o.corrected ? '<span class="wbadge" style="background:var(--dim)">fixed</span>' : '') + fixBtns(i) + '</div>';
+        (o.corrected ? '<span class="wbadge" style="background:var(--dim)">fixed</span>' : '') + fixBtns(i, o) + '</div>';
     }).join('') + '</div>';
   }
   const hbp = pt.hits_by_player || {};

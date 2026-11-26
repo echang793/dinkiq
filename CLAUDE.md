@@ -82,11 +82,15 @@ it to a temp dir), `DINKIQ_HOST` (bind address, default `127.0.0.1`), `DINKIQ_LO
 ## Layout
 
 - `src/server.py` — app wiring: auth middleware, startup recovery, SPA pages, `/api/health`
-- `src/api/` — routes by area: `uploads`, `sessions`, `trash`, `insights`, `exports`; `maintenance`
+- `src/api/` — routes by area: `uploads`, `sessions`, `trash`, `insights`, `exports`, `analysis`, `practice`; `maintenance`
   (hourly sweeps); `common` (paths, `iter_sessions`, shared helpers)
 - `src/pipeline.py` — storage layout only (paths, session ids, derived artifacts)
 - `src/session_status.py` · `src/media.py` (ffmpeg, ingest, highlights) · `src/jobs.py` (worker,
   queue, recovery) · `src/stages.py` (events → shots → points → rating, `analyze()`) · `src/notify.py`
+- `src/analytics.py` (stats and clip windows computed from stored artifacts on request) ·
+  `src/practice.py` (changes since last session, goals, plan; store `data/goals.json`) ·
+  `src/corrections.py` (manual point fixes, `corrections.json`, re-applied by the points stage) · `src/reel.py`
+  (background highlight job)
 - CV/analysis: `tracking`, `ball`, `events`, `shots`, `points`, `court`, `metrics`, `dupr`, `feedback`
 - `src/jsonio.py` — **all** JSON persistence goes through this (atomic writes, tolerant reads, NaN→null)
 - `static/dashboard.html` (markup only) + `static/css/app.css` + `static/js/*.js` — **no build step**. The scripts are
@@ -94,7 +98,7 @@ it to a temp dir), `DINKIQ_HOST` (bind address, default `127.0.0.1`), `DINKIQ_LO
   `{{V}}` in the HTML is replaced per request by `webutil.asset_version()` (hash of css/js mtimes); `?v=` URLs are immutable-cached,
   everything else `no-cache`. Keep every URL relative / `BASE`-prefixed. `calgeom.js` is pure geometry, unit-tested under node
   (`tests/test_calgeom.py`). `sw.js` is the app-shell service worker: it must never cache `/api/`.
-- Routes live in the URL hash (`#/`, `#/s/<id>`, `#/sessions`, `#/trends`, `#/compare?ids=`); `routeSession()` picks the screen a
+- Routes live in the URL hash (`#/`, `#/s/<id>`, `#/sessions`, `#/trends`, `#/practice`, `#/compare?ids=`); `routeSession()` picks the screen a
   session's state calls for. Sample data exists only behind `?demo=1` (banner); a failed fetch shows the offline banner, never fake data.
 - `src/webutil.py` — versioned static serving + gzip that skips media (gzip breaks Range seeking on clips)
 - `src/calibrate_rubric.py` — fit rubric vs known-DUPR sessions
@@ -120,6 +124,8 @@ The live service does not hot-reload Python: after changing `src/`, `launchctl k
 - **Frame numbers in parquets are REAL video frames** (tracking stride=2); time = frame / FPS
 - **Homography**: outer corners user-estimated; kitchen corners add four correspondences to an UNWEIGHTED least-squares fit (they do not "anchor" it); ball valid only at bounces
 - **Honest degradation**: gate shots on ball coverage; apply confidence penalties (short sample, geometry, camera cuts)
+- **User input is never written only into derived files**: `clear_derived` deletes them on reprocess. Point fixes
+  live in `corrections.json`; goals/practice in `data/goals.json`
 - **Single analysis worker** (`pipeline.enqueue_analyze`) — no parallel analyze threads (MPS contention)
 
 ## Gotchas

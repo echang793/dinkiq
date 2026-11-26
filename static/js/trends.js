@@ -5,6 +5,7 @@ async function loadTrendsPage() {
   try { pts = await api('/progress' + playerQS()); } catch (e) { return; }
   loadLeaderboard();
   loadStreak();
+  renderDimTrends(pts);
   if (!pts.length) {
     $('trendSummary').innerHTML = '<div class="empty">Complete a session to build your trends.</div>';
     $('trendChartBig').innerHTML = ''; $('trendTableBig').innerHTML = ''; return;
@@ -171,4 +172,32 @@ function trendChart(pts) {
     pts.map((p, i) => '<circle cx="' + x(i) + '" cy="' + y(p.dupr_band) + '" r="4" stroke-width="2.5" style="fill:var(--panel);stroke:var(--accent)"/>').join('') +
     '</svg>' +
     (known.length ? '<div style="color:var(--dim);font-size:11.5px;margin-top:4px"><span style="color:var(--accent)">●</span> video estimate &nbsp; <span style="color:var(--red)">○</span> your known DUPR</div>' : '');
+}
+
+/* ---- one line per skill, all on the same 2.5–5.0 scale so they can be compared ---- */
+function renderDimTrends(pts) {
+  const card = $('dimTrendCard'), box = $('dimTrends');
+  const by = {};
+  (pts || []).forEach(p => Object.entries(p.dimensions || {}).forEach(([k, d]) => {
+    (by[k] = by[k] || { label: d.label, unit: d.unit || '', pts: [] }).pts.push({ date: p.date, band: d.band, value: d.value });
+  }));
+  const rows = Object.values(by).filter(d => d.pts.length > 1);
+  if (!rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const W = 240, H = 46, P = 5, lo = DUPR_BAND_MIN, hi = DUPR_BAND_MAX;
+  box.innerHTML = rows.map(d => {
+    const n = d.pts.length;
+    const x = i => P + i * (W - 2 * P) / (n - 1);
+    const y = b => H - P - (Math.max(lo, Math.min(hi, b)) - lo) / (hi - lo) * (H - 2 * P);
+    const path = d.pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(p.band).toFixed(1)).join(' ');
+    const first = d.pts[0], last = d.pts[n - 1], delta = last.band - first.band;
+    const word = Math.abs(delta) < 0.1 ? 'steady' : (delta > 0 ? 'up ' : 'down ') + Math.abs(delta).toFixed(2);
+    const label = d.label + ': ' + first.band.toFixed(2) + ' to ' + last.band.toFixed(2) + ' across ' + n + ' sessions (' + word + ')';
+    return '<div class="dimrow"><div class="dimlbl"><b>' + esc(d.label) + '</b>' +
+      '<span class="dchip ' + (Math.abs(delta) < 0.1 ? 'same' : delta > 0 ? 'better' : 'worse') + '">' +
+      (Math.abs(delta) < 0.1 ? '≈ steady' : (delta > 0 ? '▲ +' : '▼ −') + Math.abs(delta).toFixed(2)) + '</span></div>' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" height="' + H + '" role="img" aria-label="' + esc(label) + '" preserveAspectRatio="none">' +
+      '<path d="' + path + '" fill="none" stroke="var(--accent)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' +
+      '<circle cx="' + x(n - 1).toFixed(1) + '" cy="' + y(last.band).toFixed(1) + '" r="3.2" fill="var(--accent)"/></svg></div>';
+  }).join('');
 }

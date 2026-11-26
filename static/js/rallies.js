@@ -109,17 +109,28 @@ async function saveClipNote(i) {
     toast('Note saved');
   } catch (e) { toast('Save failed: ' + e, true); }
 }
-async function correctPoint(idx, winner) {
+// "Fix…" menu choice -> [winner, was it an unforced error]. An explicit false clears a stale UE flag.
+const FIXES = { won: ['my_team', false], won_ue: ['my_team', true], lost: ['opp_team', false],
+                lost_ue: ['opp_team', true], unclear: ['unknown', false] };
+async function fixPoint(idx, el) {
+  const choice = el.value; el.value = '';
+  if (!choice) return;
   if (DEMO) { toast('Correcting points needs the live backend'); return; }
   try {
-    await api('/session/' + sid + '/points/' + idx, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ winner }) });
-    toast('Rally ' + (idx + 1) + ' updated');
+    if (choice === 'undo') {
+      await api('/session/' + sid + '/points/' + idx, { method: 'DELETE' });
+    } else {
+      const [winner, unforced_error] = FIXES[choice];
+      await api('/session/' + sid + '/points/' + idx, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ winner, unforced_error }) });
+    }
+    toast(choice === 'undo' ? 'Rally ' + (idx + 1) + ' back to the analysis' : 'Rally ' + (idx + 1) + ' updated');
     const fresh = await api('/session/' + sid);
     if (lastSession && lastSession.session_id === sid) {
       lastSession = {...lastSession, points: fresh.points};
       renderPoints(fresh.points, lastSession.events);   // not openSession(): that re-renders everything and jumps the scroll
+      refreshDerived();                                  // the strip, the clip lists and the deeper stats all follow the winner
     }
   } catch (e) { toast('Correction failed: ' + e, true); }
 }
