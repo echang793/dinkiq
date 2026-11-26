@@ -86,6 +86,9 @@ def _return_and_run(outcomes: list[dict], hits: list[dict], positions: pd.DataFr
         h = idx.get((i, 1))
         if _team(o.get("server")) != "opp_team" or not h or h.get("hitter") != "subject":
             continue
+        j = int(np.argmin(np.abs(t - h["t"])))
+        if at_net[j]:
+            continue        # serves are returned from deep: this "return" was misattributed
         returns += 1
         window = (t >= h["t"]) & (t <= h["t"] + RETURN_WINDOW_S) & at_net
         if window.any():

@@ -130,6 +130,15 @@ def test_a_return_you_never_followed_in_counts_as_not_reached():
     assert r["returns"] == 3 and r["reached"] == 1 and r["reached_pct"] == pytest.approx(33.3, abs=0.1)
 
 
+def test_a_return_already_at_the_kitchen_is_not_counted():
+    """Serves are returned from deep. A "return" hit from the kitchen line is a misattributed hit, and
+    counting it reported a 0.0 s run to the net on the real sample."""
+    t = np.arange(0.0, 110.0, 0.1)
+    at_net = pd.DataFrame({"frame": (t * 30).astype(int), "t": t, "x": 10.0, "y": 15.0})
+    r = analytics.extras(EVENTS, HITS, POINTS, SHOTS, at_net)["return_and_run"]
+    assert r["returns"] == 0 and r["available"] is False and r["avg_secs_to_kitchen"] is None
+
+
 def test_return_and_run_needs_positions():
     assert analytics.extras(EVENTS, HITS, POINTS, SHOTS, None)["return_and_run"]["available"] is False
 
